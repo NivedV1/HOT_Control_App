@@ -1,1 +1,102 @@
-/* Qt Dark Theme Stylesheet - We will move our CSS here later */
+QMainWindow, QWidget {
+    background-color: #2b2b2b;
+    color: #e0e0e0;
+    font-family: Arial, sans-serif;
+    font-size: 10pt;
+}
+
+QGroupBox {
+    border: 1px solid #555;
+    border-radius: 4px;
+    margin-top: 1ex;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top center;
+    padding: 0 3px;
+}
+
+QPushButton {
+    background-color: #3c3f41;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+QPushButton:hover { 
+    background-color: #4b4d4f; 
+}
+
+QPushButton:pressed { 
+    background-color: #2d2f30; 
+}
+
+QComboBox, QSpinBox, QDoubleSpinBox {
+    background-color: #3c3f41;
+    border: 1px solid #555;
+    padding: 3px;
+}
+
+QTableWidget {
+    background-color: #1e1e1e;
+    alternate-background-color: #2a2a2a;
+    gridline-color: #444;
+}
+
+QHeaderView::section {
+    background-color: #3c3f41;
+    border: 1px solid #555;
+}
+
+/* Tab Styling for the Target Modes */
+QTabWidget::pane {
+    border: 1px solid #555;
+    background: #3c3f41;
+}
+
+QTabBar::tab {
+    background: #2b2b2b;
+    border: 1px solid #555;
+    padding: 6px 12px;
+}
+
+QTabBar::tab:selected {
+    background: #4b4d4f;
+    font-weight: bold;
+}
+
+/* ==========================================
+   Top Menu Bar & Dropdowns
+   ========================================== */
+QMenuBar {
+    background-color: #2b2b2b;
+    border-bottom: 1px solid #444;
+    min-height: 22px; /* Forces a compact height */
+}
+
+QMenuBar::item {
+    spacing: 3px; 
+    padding: 2px 10px; /* Slims down the top and bottom padding */
+    background: transparent;
+    border-radius: 2px;
+}
+
+QMenuBar::item:selected { 
+    background-color: #4b4d4f; /* Highlight when hovering */
+}
+
+/* Styling the actual dropdown menus that appear when clicked */
+QMenu {
+    background-color: #3c3f41;
+    border: 1px solid #555;
+    margin: 2px;
+}
+
+QMenu::item {
+    padding: 4px 24px 4px 24px; /* Keeps the dropdown items easy to click */
+}
+
+QMenu::item:selected {
+    background-color: #55585a;
+}

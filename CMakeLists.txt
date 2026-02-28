@@ -21,8 +21,6 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 set(SOURCES
     src/main.cpp
     src/ui/mainwindow.cpp
-    src/ui/monitorpanel.cpp
-    src/ui/controlpanel.cpp
     src/core/trap_manager.cpp
     src/core/algorithms/gs_algorithm.cpp
     src/hardware/slm_controller.cpp
@@ -32,8 +30,6 @@ set(SOURCES
 # Define header files (optional in CMake, but helps them show up in IDEs like Qt Creator/VS)
 set(HEADERS
     src/ui/mainwindow.h
-    src/ui/monitorpanel.h
-    src/ui/controlpanel.h
     src/ui/components/traptable.h
     src/ui/components/patternview.h
     src/core/trap_manager.h
