@@ -24,13 +24,8 @@ QPushButton {
     padding: 5px;
 }
 
-QPushButton:hover { 
-    background-color: #4b4d4f; 
-}
-
-QPushButton:pressed { 
-    background-color: #2d2f30; 
-}
+QPushButton:hover { background-color: #4b4d4f; }
+QPushButton:pressed { background-color: #2d2f30; }
 
 QComboBox, QSpinBox, QDoubleSpinBox {
     background-color: #3c3f41;
@@ -66,27 +61,24 @@ QTabBar::tab:selected {
     font-weight: bold;
 }
 
-/* ==========================================
-   Top Menu Bar & Dropdowns
-   ========================================== */
+/* Top Menu Bar & Dropdowns */
 QMenuBar {
     background-color: #2b2b2b;
     border-bottom: 1px solid #444;
-    min-height: 22px; /* Forces a compact height */
+    min-height: 22px; 
 }
 
 QMenuBar::item {
     spacing: 3px; 
-    padding: 2px 10px; /* Slims down the top and bottom padding */
+    padding: 2px 10px; 
     background: transparent;
     border-radius: 2px;
 }
 
 QMenuBar::item:selected { 
-    background-color: #4b4d4f; /* Highlight when hovering */
+    background-color: #4b4d4f; 
 }
 
-/* Styling the actual dropdown menus that appear when clicked */
 QMenu {
     background-color: #3c3f41;
     border: 1px solid #555;
@@ -94,7 +86,7 @@ QMenu {
 }
 
 QMenu::item {
-    padding: 4px 24px 4px 24px; /* Keeps the dropdown items easy to click */
+    padding: 4px 24px 4px 24px; 
 }
 
 QMenu::item:selected {

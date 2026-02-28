@@ -12,7 +12,7 @@ set(CMAKE_AUTORCC ON) # Automatically compiles .qrc resource files
 set(CMAKE_AUTOUIC ON) # Automatically handles .ui files (if you use Qt Designer later)
 
 # Find Qt6 (Change to Qt5 if you are using an older version)
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets) # Add Multimedia if you plan to use camera features
 
 # (Optional - Uncomment later) Find OpenCV for your live camera feed
 # find_package(OpenCV REQUIRED)
@@ -59,9 +59,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # Link the Qt libraries to your executable
 target_link_libraries(${PROJECT_NAME} PRIVATE 
-    Qt6::Core 
+Qt6::Core 
     Qt6::Gui 
     Qt6::Widgets
+    Qt6::Multimedia
+    Qt6::MultimediaWidgets
     # ${OpenCV_LIBS} # Uncomment when you add OpenCV
 )
 
