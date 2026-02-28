@@ -1,0 +1,108 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\mocs_compilation_Debug.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\mainwindow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\monitorpanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\controlpanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\core\trap_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\core\algorithms\gs_algorithm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\hardware\slm_controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\hardware\camera_stream.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\3YJK5W5UP7_Debug\qrc_resources.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\mocs_compilation_Release.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\3YJK5W5UP7_Release\qrc_resources.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\mocs_compilation_MinSizeRel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\3YJK5W5UP7_MinSizeRel\qrc_resources.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\mocs_compilation_RelWithDebInfo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\HOT_Control_App_autogen\3YJK5W5UP7_RelWithDebInfo\qrc_resources.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\mainwindow.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\monitorpanel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\controlpanel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\components\traptable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\ui\components\patternview.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\core\trap_manager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\core\algorithms\phase_algorithm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\core\algorithms\gs_algorithm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\core\algorithms\wgs_algorithm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\hardware\slm_controller.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\src\hardware\camera_stream.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\build\CMakeFiles\72a55df245147c4d4797c19adf146b5f\qrc_resources.cpp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\NIVED\Desktop\gui_c\HOT_Control_App\resources\resources.qrc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{13506FFE-30F6-35A4-BB8E-0B38FC95F4BC}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{127FAEFF-3B95-3961-8986-A6316CFC6B28}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4CF10C92-45B4-30CD-A827-1AF12FDAC595}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

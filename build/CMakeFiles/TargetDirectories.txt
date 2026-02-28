@@ -1,0 +1,3 @@
+C:/Users/NIVED/Desktop/gui_c/HOT_Control_App/build/CMakeFiles/HOT_Control_App.dir
+C:/Users/NIVED/Desktop/gui_c/HOT_Control_App/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/NIVED/Desktop/gui_c/HOT_Control_App/build/CMakeFiles/ZERO_CHECK.dir
