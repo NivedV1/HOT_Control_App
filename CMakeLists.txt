@@ -11,8 +11,8 @@ set(CMAKE_AUTOMOC ON) # Automatically handles Q_OBJECT macros
 set(CMAKE_AUTORCC ON) # Automatically compiles .qrc resource files
 set(CMAKE_AUTOUIC ON) # Automatically handles .ui files (if you use Qt Designer later)
 
-# Find Qt6 (Change to Qt5 if you are using an older version)
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets) # Add Multimedia if you plan to use camera features
+# Find Qt6
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets) 
 
 # (Optional - Uncomment later) Find OpenCV for your live camera feed
 # find_package(OpenCV REQUIRED)
@@ -21,6 +21,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidge
 set(SOURCES
     src/main.cpp
     src/ui/mainwindow.cpp
+    src/ui/settingsdialog.cpp     # NEW: Added Settings Dialog
+    src/camera/cameramanager.cpp  # NEW: Added Camera Manager
     src/core/trap_manager.cpp
     src/core/algorithms/gs_algorithm.cpp
     src/hardware/slm_controller.cpp
@@ -30,6 +32,8 @@ set(SOURCES
 # Define header files (optional in CMake, but helps them show up in IDEs like Qt Creator/VS)
 set(HEADERS
     src/ui/mainwindow.h
+    src/ui/settingsdialog.h       # NEW: Added Settings Dialog header
+    src/camera/cameramanager.h    # NEW: Added Camera Manager header
     src/ui/components/traptable.h
     src/ui/components/patternview.h
     src/core/trap_manager.h
@@ -55,11 +59,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/core
     src/core/algorithms
     src/hardware
+    src/camera                    # NEW: Added camera folder to includes
 )
 
 # Link the Qt libraries to your executable
 target_link_libraries(${PROJECT_NAME} PRIVATE 
-Qt6::Core 
+    Qt6::Core 
     Qt6::Gui 
     Qt6::Widgets
     Qt6::Multimedia
