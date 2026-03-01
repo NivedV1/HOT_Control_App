@@ -47,7 +47,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupConnections();
 }
 
-MainWindow::~MainWindow() {}
+MainWindow::~MainWindow() {
+    // Safely stop the camera and delete the manager BEFORE the UI is destroyed
+    if (camManager) {
+        camManager->stopCamera();
+        delete camManager;
+        camManager = nullptr;
+    }
+}
 
 void MainWindow::setupUI() {
     createMenus();

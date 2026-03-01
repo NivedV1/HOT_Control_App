@@ -69,6 +69,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     phasePreview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding); 
     phasePreview->setStyleSheet("background-color: black; border: 1px solid #555;");
     phasePreview->setMinimumSize(350, 350);
+    phasePreview->setScaledContents(true);
     
     saveBtn = new QPushButton("Save Mask As...");
     saveBtn->setEnabled(false);
@@ -123,7 +124,7 @@ void HologramDialog::generatePattern() {
     }
 
     // Update the UI
-    phasePreview->setPixmap(QPixmap::fromImage(currentPhaseImage).scaled(phasePreview->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    phasePreview->setPixmap(QPixmap::fromImage(currentPhaseImage));
     saveBtn->setEnabled(true);
 }
 
