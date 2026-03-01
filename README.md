@@ -26,7 +26,7 @@ A high-performance, cross-platform graphical interface for controlling Holograph
 
 | Main Control Interface | Standalone Phase Generator |
 |:---:|:---:|
-| <img src="docs/main_ui_placeholder.png" width="400" alt="Main UI"> | <img src="docs/generator_placeholder.png" width="400" alt="Hologram Generator"> |
+| <img src="images/main.png" width="400" alt="Main UI"> | <img src="images/generator.png" width="400" alt="Hologram Generator"> |
 | *Live camera feed, target pattern grid, and SLM mask monitor.* | *Analytical generation of blazed and binary gratings.* |
 
 ---
