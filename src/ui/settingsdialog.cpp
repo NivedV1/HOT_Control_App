@@ -27,7 +27,7 @@ SettingsDialog::SettingsDialog(int currentWidth, int currentHeight, double curre
     form->addRow("SLM Height (pixels):", heightSpin);
     form->addRow("SLM Pixel Size:", pixelSpin);
     
-    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, this);
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, this);
     form->addRow(buttonBox);
     
     connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);

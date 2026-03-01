@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "settingsdialog.h"
+#include "hologramdialog.h"
 #include "../camera/cameramanager.h"
 
 #include <QVBoxLayout>
@@ -15,10 +16,27 @@
 #include <QFile>
 #include <QMenuBar>
 #include <QStatusBar>
+#include <QSettings>
+#include <QCoreApplication>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QDir>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
     setMinimumSize(1200, 800);
+
+    // --- NEW: Load saved hardware settings from an INI file ---
+    // This creates/looks for 'hardware_config.ini' in the exact folder your .exe is running from
+    QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
+    QSettings settings(configPath, QSettings::IniFormat);
+    
+    // The second parameter is the default fallback if the file doesn't exist yet
+    slmWidth = settings.value("Hardware/SLM_Width", 1920).toInt();
+    slmHeight = settings.value("Hardware/SLM_Height", 1080).toInt();
+    slmPixelSize = settings.value("Hardware/SLM_PixelSize", 8.0).toDouble();
 
     setupUI();
     applyDarkTheme();
@@ -61,7 +79,13 @@ void MainWindow::createMenus() {
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsDialog);
     fileMenu->addSeparator();
     fileMenu->addAction("Exit", this, &QWidget::close);
-    menuBar()->addMenu("&Tools");
+    
+    QMenu *toolsMenu = menuBar()->addMenu("&Tools");
+    
+    // --- NEW: Hologram Generator Action ---
+    QAction *holoAction = toolsMenu->addAction("Create Hologram...");
+    connect(holoAction, &QAction::triggered, this, &MainWindow::openHologramGenerator);
+    
     menuBar()->addMenu("&Help");
 }
 
@@ -97,7 +121,11 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     resolutionLabel = new QLabel(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
     phaseTools->addWidget(resolutionLabel);
     phaseTools->addStretch();
-    phaseTools->addWidget(new QPushButton("Save Mask"));
+    
+    // --- CHANGED: Assign the button to our pointer instead of creating it inline ---
+    saveMaskBtn = new QPushButton("Save Mask");
+    phaseTools->addWidget(saveMaskBtn);
+    
     layout->addLayout(phaseTools, 2, 1);
 
     QHBoxLayout *camTools = new QHBoxLayout();
@@ -204,7 +232,8 @@ void MainWindow::setupConnections() {
     // UI Connections
     connect(targetModeTabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
     onTabChanged(0);
-
+    connect(targetModeTabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
+    connect(saveMaskBtn, &QPushButton::clicked, this, &MainWindow::savePhaseMask);
     // Camera Connections
     for (const auto &cam : camManager->getAvailableCameras()) {
         camSelect->addItem(cam.description());
@@ -231,13 +260,32 @@ void MainWindow::setupConnections() {
 
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, this);
+    
     if (dialog.exec() == QDialog::Accepted) {
+        // 1. Update the variables in RAM
         slmWidth = dialog.getWidth();
         slmHeight = dialog.getHeight();
         slmPixelSize = dialog.getPixelSize();
+        
+        // 2. Save the new variables to the physical disk
+        QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
+        QSettings settings(configPath, QSettings::IniFormat);
+        
+        settings.setValue("Hardware/SLM_Width", slmWidth);
+        settings.setValue("Hardware/SLM_Height", slmHeight);
+        settings.setValue("Hardware/SLM_PixelSize", slmPixelSize);
+        settings.sync(); // Force it to write to disk immediately
+        
+        // 3. Update UI and notify user
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
-        statusBar()->showMessage("Hardware settings updated.", 3000);
+        statusBar()->showMessage("Settings saved to: " + configPath, 5000);
     }
+}
+
+void MainWindow::openHologramGenerator() {
+    // Pass the current SLM width and height straight from RAM into the new window
+    HologramDialog dialog(slmWidth, slmHeight, this);
+    dialog.exec();
 }
 
 void MainWindow::onTabChanged(int index) {
@@ -258,5 +306,39 @@ void MainWindow::applyDarkTheme() {
     if (file.open(QFile::ReadOnly | QFile::Text)) {
         this->setStyleSheet(QTextStream(&file).readAll());
         file.close();
+    }
+}
+
+// ==========================================
+// IMAGE EXPORT LOGIC
+// ==========================================
+// ==========================================
+// IMAGE EXPORT LOGIC
+// ==========================================
+void MainWindow::savePhaseMask() {
+    // 1. Safety Check: Use the dot (.) instead of arrow (->) for Qt6
+    if (phaseMaskLabel->pixmap().isNull()) {
+        QMessageBox::warning(this, "No Mask Found", "There is no phase mask currently generated to save.");
+        return;
+    }
+
+    // 2. Setup a default filename with the current date and time
+    QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString defaultFileName = QDir(defaultPath).filePath("PhaseMask_" + timestamp + ".png");
+
+    // 3. Open the OS save dialog so the user can pick the folder and name
+    QString fileName = QFileDialog::getSaveFileName(this, 
+                                                    "Save Phase Mask", 
+                                                    defaultFileName, 
+                                                    "Images (*.png *.bmp *.jpg)");
+
+    // 4. If they didn't click "Cancel", save the image to disk (using dot again)
+    if (!fileName.isEmpty()) {
+        if (phaseMaskLabel->pixmap().save(fileName)) {
+            statusBar()->showMessage("Phase mask saved to: " + fileName, 5000);
+        } else {
+            QMessageBox::critical(this, "Save Error", "Failed to save the image. Please check folder permissions.");
+        }
     }
 }

@@ -24,6 +24,7 @@ set(SOURCES
     src/ui/settingsdialog.cpp     # NEW: Added Settings Dialog
     src/camera/cameramanager.cpp  # NEW: Added Camera Manager
     src/core/trap_manager.cpp
+    src/ui/hologramdialog.cpp
     src/core/algorithms/gs_algorithm.cpp
     src/hardware/slm_controller.cpp
     src/hardware/camera_stream.cpp
@@ -34,6 +35,7 @@ set(HEADERS
     src/ui/mainwindow.h
     src/ui/settingsdialog.h       # NEW: Added Settings Dialog header
     src/camera/cameramanager.h    # NEW: Added Camera Manager header
+    src/ui/hologramdialog.h
     src/ui/components/traptable.h
     src/ui/components/patternview.h
     src/core/trap_manager.h

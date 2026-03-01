@@ -24,9 +24,10 @@ public:
 
 private slots:
     void openSettingsDialog();
+    void openHologramGenerator();
     void onTabChanged(int index);
     void onRecordingTimeUpdated(const QString &timeString);
-
+    void savePhaseMask();
 private:
     // Helper functions to keep code incredibly clean
     void setupUI();
@@ -36,6 +37,7 @@ private:
     void setupConnections();
     void applyDarkTheme();
 
+
     // UI Pointers
     QGraphicsView *targetView;
     QGraphicsScene *targetScene;
@@ -44,6 +46,7 @@ private:
     QTableWidget *trapTable;
     QLabel *phaseMaskLabel;
     QLabel *resolutionLabel;
+    QPushButton *saveMaskBtn;
     
     QVideoWidget *cameraFeedWidget;
     QComboBox *camSelect;
