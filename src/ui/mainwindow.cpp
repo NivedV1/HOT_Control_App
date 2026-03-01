@@ -14,7 +14,9 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QFile>
+#include <QTextStream>
 #include <QMenuBar>
+#include <QMenu>
 #include <QStatusBar>
 #include <QSettings>
 #include <QCoreApplication>
@@ -26,23 +28,22 @@
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
-    setMinimumSize(1200, 800);
+    setMinimumSize(800, 600);
 
-    // --- NEW: Load saved hardware settings from an INI file ---
-    // This creates/looks for 'hardware_config.ini' in the exact folder your .exe is running from
+    // Load saved hardware settings from the INI file
     QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
     QSettings settings(configPath, QSettings::IniFormat);
     
-    // The second parameter is the default fallback if the file doesn't exist yet
     slmWidth = settings.value("Hardware/SLM_Width", 1920).toInt();
     slmHeight = settings.value("Hardware/SLM_Height", 1080).toInt();
     slmPixelSize = settings.value("Hardware/SLM_PixelSize", 8.0).toDouble();
+    cameraBackend = settings.value("Hardware/CameraBackend", 0).toInt();
 
     setupUI();
     applyDarkTheme();
     
-    // Initialize backend logic
-    camManager = new CameraManager(cameraFeedWidget, this);
+    // Initialize backend logic with the chosen camera engine
+    camManager = new CameraManager(cameraBackend, this);
     setupConnections();
 }
 
@@ -56,7 +57,7 @@ void MainWindow::setupUI() {
     QGridLayout *mainLayout = new QGridLayout(centralWidget);
     mainLayout->setSpacing(10); 
 
-    // Build the Grid using our helper functions
+    // Build the Grid
     createMonitors(mainLayout);
     createControls(mainLayout);
 
@@ -81,8 +82,6 @@ void MainWindow::createMenus() {
     fileMenu->addAction("Exit", this, &QWidget::close);
     
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
-    
-    // --- NEW: Hologram Generator Action ---
     QAction *holoAction = toolsMenu->addAction("Create Hologram...");
     connect(holoAction, &QAction::triggered, this, &MainWindow::openHologramGenerator);
     
@@ -108,9 +107,12 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     phaseMaskLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
     layout->addWidget(phaseMaskLabel, 1, 1);
 
-    cameraFeedWidget = new QVideoWidget();
-    cameraFeedWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    layout->addWidget(cameraFeedWidget, 1, 2);
+    // Changed to QLabel to support OpenCV's QImage output
+    cameraFeedLabel = new QLabel("Camera Feed (Offline)");
+    cameraFeedLabel->setAlignment(Qt::AlignCenter);
+    cameraFeedLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
+    cameraFeedLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    layout->addWidget(cameraFeedLabel, 1, 2);
 
     // Row 2: Toolbars
     QHBoxLayout *targetTools = new QHBoxLayout();
@@ -121,15 +123,13 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     resolutionLabel = new QLabel(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
     phaseTools->addWidget(resolutionLabel);
     phaseTools->addStretch();
-    
-    // --- CHANGED: Assign the button to our pointer instead of creating it inline ---
     saveMaskBtn = new QPushButton("Save Mask");
     phaseTools->addWidget(saveMaskBtn);
-    
     layout->addLayout(phaseTools, 2, 1);
 
     QHBoxLayout *camTools = new QHBoxLayout();
-    camTools->addWidget(new QLabel("FPS: 30  Exposure: 10ms"));
+    fpsLabel = new QLabel("FPS: 0");
+    camTools->addWidget(fpsLabel);
     camTools->addStretch();
     camTools->addWidget(new QCheckBox("Overlay Target"));
     layout->addLayout(camTools, 2, 2);
@@ -188,7 +188,7 @@ void MainWindow::createControls(QGridLayout *layout) {
     
     QGroupBox *camGroup = new QGroupBox("Camera Control");
     QFormLayout *camForm = new QFormLayout();
-    camSelect = new QComboBox(); // Will be populated in setupConnections
+    camSelect = new QComboBox(); 
     camForm->addRow("Camera:", camSelect);
     
     QHBoxLayout *captureLayout = new QHBoxLayout();
@@ -229,16 +229,16 @@ void MainWindow::createControls(QGridLayout *layout) {
 }
 
 void MainWindow::setupConnections() {
+    // Populate camera dropdown
+    for (const QString &camName : camManager->getCameraNames()) {
+        camSelect->addItem(camName);
+    }
+
     // UI Connections
     connect(targetModeTabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
-    onTabChanged(0);
-    connect(targetModeTabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
     connect(saveMaskBtn, &QPushButton::clicked, this, &MainWindow::savePhaseMask);
+
     // Camera Connections
-    for (const auto &cam : camManager->getAvailableCameras()) {
-        camSelect->addItem(cam.description());
-    }
-    
     connect(camSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), camManager, &CameraManager::changeCamera);
     connect(camStartBtn, &QPushButton::clicked, camManager, &CameraManager::startCamera);
     connect(camStopBtn, &QPushButton::clicked, camManager, &CameraManager::stopCamera);
@@ -246,10 +246,12 @@ void MainWindow::setupConnections() {
     connect(recordVideoBtn, &QPushButton::toggled, camManager, &CameraManager::toggleRecording);
     
     // Connect backend signals back to UI
+    connect(camManager, &CameraManager::frameReady, this, &MainWindow::updateCameraFeed);
     connect(camManager, &CameraManager::statusMessage, this, [this](const QString &msg){
         statusBar()->showMessage(msg);
     });
     connect(camManager, &CameraManager::recordingTimeUpdated, this, &MainWindow::onRecordingTimeUpdated);
+    connect(camManager, &CameraManager::fpsUpdated, this, &MainWindow::onFPSUpdated);
 
     if (camSelect->count() > 0) camManager->changeCamera(0);
 }
@@ -259,33 +261,68 @@ void MainWindow::setupConnections() {
 // ==========================================
 
 void MainWindow::openSettingsDialog() {
-    SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, this);
+    SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend, this);
     
     if (dialog.exec() == QDialog::Accepted) {
-        // 1. Update the variables in RAM
         slmWidth = dialog.getWidth();
         slmHeight = dialog.getHeight();
         slmPixelSize = dialog.getPixelSize();
         
-        // 2. Save the new variables to the physical disk
+        bool backendChanged = (cameraBackend != dialog.getCameraBackend());
+        cameraBackend = dialog.getCameraBackend(); 
+        
         QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
         QSettings settings(configPath, QSettings::IniFormat);
         
         settings.setValue("Hardware/SLM_Width", slmWidth);
         settings.setValue("Hardware/SLM_Height", slmHeight);
         settings.setValue("Hardware/SLM_PixelSize", slmPixelSize);
-        settings.sync(); // Force it to write to disk immediately
+        settings.setValue("Hardware/CameraBackend", cameraBackend);
+        settings.sync();
         
-        // 3. Update UI and notify user
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
-        statusBar()->showMessage("Settings saved to: " + configPath, 5000);
+        
+        if (backendChanged) {
+            QMessageBox::information(this, "Restart Required", 
+                "You have changed the Camera Engine. Please restart the application for this to take effect.");
+        } else {
+            statusBar()->showMessage("Settings saved to: " + configPath, 5000);
+        }
     }
 }
 
 void MainWindow::openHologramGenerator() {
-    // Pass the current SLM width and height straight from RAM into the new window
     HologramDialog dialog(slmWidth, slmHeight, this);
     dialog.exec();
+}
+
+void MainWindow::savePhaseMask() {
+    if (phaseMaskLabel->pixmap().isNull()) {
+        QMessageBox::warning(this, "No Mask Found", "There is no phase mask currently generated to save.");
+        return;
+    }
+
+    QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    QString defaultFileName = QDir(defaultPath).filePath("PhaseMask_" + timestamp + ".png");
+
+    QString fileName = QFileDialog::getSaveFileName(this, 
+                                                    "Save Phase Mask", 
+                                                    defaultFileName, 
+                                                    "Images (*.png *.bmp *.jpg)");
+
+    if (!fileName.isEmpty()) {
+        if (phaseMaskLabel->pixmap().save(fileName)) {
+            statusBar()->showMessage("Phase mask saved to: " + fileName, 5000);
+        } else {
+            QMessageBox::critical(this, "Save Error", "Failed to save the image. Please check folder permissions.");
+        }
+    }
+}
+
+void MainWindow::updateCameraFeed(const QImage &img) {
+    cameraFeedLabel->setPixmap(QPixmap::fromImage(img).scaled(
+        cameraFeedLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
 void MainWindow::onTabChanged(int index) {
@@ -301,44 +338,14 @@ void MainWindow::onRecordingTimeUpdated(const QString &timeString) {
     recordTimeLabel->setText(timeString);
 }
 
+void MainWindow::onFPSUpdated(const QString &fpsString) {
+    fpsLabel->setText(fpsString);
+}
+
 void MainWindow::applyDarkTheme() {
     QFile file(":/theme.qss");
     if (file.open(QFile::ReadOnly | QFile::Text)) {
         this->setStyleSheet(QTextStream(&file).readAll());
         file.close();
-    }
-}
-
-// ==========================================
-// IMAGE EXPORT LOGIC
-// ==========================================
-// ==========================================
-// IMAGE EXPORT LOGIC
-// ==========================================
-void MainWindow::savePhaseMask() {
-    // 1. Safety Check: Use the dot (.) instead of arrow (->) for Qt6
-    if (phaseMaskLabel->pixmap().isNull()) {
-        QMessageBox::warning(this, "No Mask Found", "There is no phase mask currently generated to save.");
-        return;
-    }
-
-    // 2. Setup a default filename with the current date and time
-    QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    QString defaultFileName = QDir(defaultPath).filePath("PhaseMask_" + timestamp + ".png");
-
-    // 3. Open the OS save dialog so the user can pick the folder and name
-    QString fileName = QFileDialog::getSaveFileName(this, 
-                                                    "Save Phase Mask", 
-                                                    defaultFileName, 
-                                                    "Images (*.png *.bmp *.jpg)");
-
-    // 4. If they didn't click "Cancel", save the image to disk (using dot again)
-    if (!fileName.isEmpty()) {
-        if (phaseMaskLabel->pixmap().save(fileName)) {
-            statusBar()->showMessage("Phase mask saved to: " + fileName, 5000);
-        } else {
-            QMessageBox::critical(this, "Save Error", "Failed to save the image. Please check folder permissions.");
-        }
     }
 }

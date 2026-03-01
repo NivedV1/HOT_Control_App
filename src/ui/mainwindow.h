@@ -8,7 +8,7 @@
 #include <QComboBox>
 #include <QTabWidget>
 #include <QTableWidget>
-#include <QVideoWidget>
+//#include <QVideoWidget>
 #include <QPushButton>
 
 // Forward declarations
@@ -27,7 +27,9 @@ private slots:
     void openHologramGenerator();
     void onTabChanged(int index);
     void onRecordingTimeUpdated(const QString &timeString);
+    void onFPSUpdated(const QString &fpsString); // for fps showing camera
     void savePhaseMask();
+    void updateCameraFeed(const QImage &img);
 private:
     // Helper functions to keep code incredibly clean
     void setupUI();
@@ -46,9 +48,10 @@ private:
     QTableWidget *trapTable;
     QLabel *phaseMaskLabel;
     QLabel *resolutionLabel;
+    QLabel *fpsLabel;
     QPushButton *saveMaskBtn;
     
-    QVideoWidget *cameraFeedWidget;
+    QLabel *cameraFeedLabel;
     QComboBox *camSelect;
     QPushButton *camStartBtn;
     QPushButton *camStopBtn;
@@ -63,6 +66,7 @@ private:
     int slmWidth = 1920;
     int slmHeight = 1080;
     double slmPixelSize = 8.0;
+    int cameraBackend = 0; // NEW: 0 = Qt, 1 = OpenCV
 };
 
 #endif // MAINWINDOW_H

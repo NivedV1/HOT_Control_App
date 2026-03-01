@@ -14,6 +14,10 @@ set(CMAKE_AUTOUIC ON) # Automatically handles .ui files (if you use Qt Designer 
 # Find Qt6
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets) 
 
+# --- NEW: Tell CMake exactly where OpenCV is, then find it ---
+set(OpenCV_DIR "C:/opencv/build")
+find_package(OpenCV REQUIRED)
+
 # (Optional - Uncomment later) Find OpenCV for your live camera feed
 # find_package(OpenCV REQUIRED)
 
@@ -71,7 +75,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
-    # ${OpenCV_LIBS} # Uncomment when you add OpenCV
+    ${OpenCV_LIBS} # Uncomment when you add OpenCV
 )
 
 if (WIN32)

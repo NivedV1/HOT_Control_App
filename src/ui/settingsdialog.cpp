@@ -2,13 +2,14 @@
 #include <QFormLayout>
 #include <QDialogButtonBox>
 
-SettingsDialog::SettingsDialog(int currentWidth, int currentHeight, double currentPixelSize, QWidget *parent)
+SettingsDialog::SettingsDialog(int currentWidth, int currentHeight, double currentPixelSize, int currentBackend, QWidget *parent)
     : QDialog(parent) {
     setWindowTitle("Hardware Settings");
-    setMinimumWidth(300);
+    setMinimumWidth(350);
     
     QFormLayout *form = new QFormLayout(this);
     
+    // SLM Settings
     widthSpin = new QSpinBox(this);
     widthSpin->setRange(100, 8000);
     widthSpin->setValue(currentWidth);
@@ -27,6 +28,15 @@ SettingsDialog::SettingsDialog(int currentWidth, int currentHeight, double curre
     form->addRow("SLM Height (pixels):", heightSpin);
     form->addRow("SLM Pixel Size:", pixelSpin);
     
+    // NEW: Camera Backend Settings
+    cameraBackendCombo = new QComboBox(this);
+    cameraBackendCombo->addItems({
+        "Qt Native (WMF - Standard Webcams)", 
+        "OpenCV (DirectShow - Best for OBS & Lab Cams)"
+    });
+    cameraBackendCombo->setCurrentIndex(currentBackend);
+    form->addRow("Camera Engine:", cameraBackendCombo);
+    
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, this);
     form->addRow(buttonBox);
     
@@ -37,3 +47,4 @@ SettingsDialog::SettingsDialog(int currentWidth, int currentHeight, double curre
 int SettingsDialog::getWidth() const { return widthSpin->value(); }
 int SettingsDialog::getHeight() const { return heightSpin->value(); }
 double SettingsDialog::getPixelSize() const { return pixelSpin->value(); }
+int SettingsDialog::getCameraBackend() const { return cameraBackendCombo->currentIndex(); } // NEW
