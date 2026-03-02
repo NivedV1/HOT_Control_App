@@ -1,0 +1,320 @@
+/* ==========================================
+   HOT Control - Professional Light Theme (Compact)
+   ========================================== */
+
+/* Main application background (Soft Gray) */
+QMainWindow, QDialog, QWidget {
+    background-color: #F0F2F5; 
+    color: #111827;
+    font-family: Arial, sans-serif;
+    font-size: 10pt;
+}
+
+/* Ensure black monitors stay black */
+QLabel[text="Camera Feed (Offline)"], QLabel[style*="background-color: black"] {
+    background-color: black;
+    color: white; 
+    border: 1px solid #555;
+}
+
+/* --- Panels and GroupBoxes (Compact Flat Design) --- */
+QGroupBox {
+    background-color: transparent; 
+    border: 1px solid #BCC1CB;
+    border-radius: 4px;
+    margin-top: 18px; /* Pushes the border down to intersect the title */
+    padding-top: 5px; /* <-- REDUCED: Removes the bloated empty space at the top */
+    padding-bottom: 5px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top center; 
+    padding: 0 3px; 
+    background-color: #F0F2F5; /* Matches app background to hide the line */
+    color: #1F2937;
+    font-weight: bold;
+}
+
+/* --- Buttons (Compact Size) --- */
+QPushButton {
+    background-color: #E2E6EA;
+    border: 1px solid #BCC1CB;
+    border-radius: 4px;
+    padding: 2px 8px; /* <-- REDUCED PADDING */
+    min-height: 20px;  /* <-- REDUCED HEIGHT: Matches dark mode density */
+    color: #111827;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #D2D6DA;
+    border-color: #A1A7B3;
+}
+
+QPushButton:pressed {
+    background-color: #BCC1CB;
+}
+
+QPushButton:checked {
+    background-color: #3B82F6;
+    color: white;
+    border: 1px solid #2563EB;
+}
+
+/* --- Inputs and Dropdowns --- */
+QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #BCC1CB;
+    border-radius: 4px;
+    padding: 3px 6px; /* <-- REDUCED PADDING */
+    min-height: 20px;
+    color: #111827;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border: 1px solid #3B82F6;
+}
+
+/* Dropdown menu list styling */
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #111827;
+    selection-background-color: #3B82F6;
+    selection-color: white;
+    border: 1px solid #BCC1CB;
+}
+
+/* --- Tables and Tabs --- */
+QTableWidget {
+    background-color: #FFFFFF;
+    alternate-background-color: #F9FAFB;
+    border: 1px solid #BCC1CB;
+    gridline-color: #D1D5DB;
+}
+
+QHeaderView::section {
+    background-color: #E2E6EA;
+    padding: 4px;
+    border: 1px solid #BCC1CB;
+    font-weight: bold;
+    color: #111827;
+}
+
+QTabWidget::pane {
+    border: 1px solid #BCC1CB;
+    background-color: #F0F2F5;
+    border-radius: 4px;
+}
+
+QTabBar::tab {
+    background: #E2E6EA;
+    border: 1px solid #BCC1CB;
+    padding: 3px 8px;
+    margin-right: 2px;
+    border-top-left-radius: 2px;
+    border-top-right-radius: 2px;
+}
+
+QTabBar::tab:selected {
+    background: #F0F2F5;
+    border-bottom-color: #F0F2F5; 
+    font-weight: bold;
+    color: #111827;
+}
+
+/* --- Menus and Status Bar --- */
+QMenuBar {
+    background-color: #F0F2F5;
+    border-bottom: 1px solid #BCC1CB;
+}
+
+QMenuBar::item:selected {
+    background-color: #D2D6DA;
+}
+
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #BCC1CB;
+}
+
+QMenu::item:selected {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+}
+
+QStatusBar {
+    background-color: #E2E6EA;
+    color: #374151;
+    border-top: 1px solid #BCC1CB;
+}/* ==========================================
+   HOT Control - Professional Light Theme (Compact)
+   ========================================== */
+
+/* Main application background (Soft Gray) */
+QMainWindow, QDialog, QWidget {
+    background-color: #F0F2F5; 
+    color: #111827;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 10pt;
+}
+
+/* Ensure black monitors stay black */
+QLabel[text="Camera Feed (Offline)"], QLabel[style*="background-color: black"] {
+    background-color: black;
+    color: white; 
+    border: 1px solid #555;
+}
+
+
+/* --- Panels and GroupBoxes (Flat Design to match Dark Mode) --- */
+/* --- Panels and GroupBoxes (Ultra-Compact Flat Design) --- */
+QGroupBox {
+    background-color: transparent; 
+    border: 1px solid #BCC1CB;
+    border-radius: 4px;
+    margin-top: 10px;    /* Just enough room for the title to sit */
+    padding-top: 6px;    /* <-- DRASTICALLY REDUCED top inside space */
+    padding-bottom: 2px; /* <-- DRASTICALLY REDUCED bottom inside space */
+    padding-left: 2px;   /* <-- NEW: Shrinks the left gap */
+    padding-right: 2px;  /* <-- NEW: Shrinks the right gap */
+}
+
+QGroupBox::title {
+    subcontrol-origin: border; 
+    subcontrol-position: top center; 
+    top: -8px; 
+    padding: 0 4px; /* Slightly tighter text padding */
+    background-color: #F0F2F5; 
+    color: #1F2937;
+    font-weight: bold;
+}
+/* --- Buttons (Compact Size) --- */
+QPushButton {
+    background-color: #E2E6EA;
+    border: 1px solid #BCC1CB;
+    border-radius: 4px;
+    padding: 4px 10px; /* <-- REDUCED PADDING */
+    min-height: 22px;  /* <-- REDUCED HEIGHT: Matches dark mode density */
+    color: #111827;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #D2D6DA;
+    border-color: #A1A7B3;
+}
+
+QPushButton:pressed {
+    background-color: #BCC1CB;
+}
+
+QPushButton:checked {
+    background-color: #3B82F6;
+    color: white;
+    border: 1px solid #2563EB;
+}
+
+/* --- Inputs and Dropdowns --- */
+QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #BCC1CB;
+    border-radius: 4px;
+    padding: 3px 6px; /* <-- REDUCED PADDING */
+    min-height: 20px;
+    color: #111827;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+    border: 1px solid #3B82F6;
+}
+
+/* Dropdown menu list styling */
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #111827;
+    selection-background-color: #3B82F6;
+    selection-color: white;
+    border: 1px solid #BCC1CB;
+}
+
+/* --- Tables and Tabs --- */
+QTableWidget {
+    background-color: #FFFFFF;
+    alternate-background-color: #F9FAFB;
+    border: 1px solid #BCC1CB;
+    gridline-color: #D1D5DB;
+}
+
+QHeaderView::section {
+    background-color: #E2E6EA;
+    padding: 4px;
+    border: 1px solid #BCC1CB;
+    font-weight: bold;
+    color: #111827;
+}
+
+QTabWidget::pane {
+    border: 1px solid #BCC1CB;
+    background-color: #F0F2F5;
+    border-radius: 4px;
+}
+
+QTabBar::tab {
+    background: #E2E6EA;
+    border: 1px solid #BCC1CB;
+    padding: 5px 12px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:selected {
+    background: #F0F2F5;
+    border-bottom-color: #F0F2F5; 
+    font-weight: bold;
+    color: #111827;
+}
+
+/* --- Menus and Status Bar --- */
+/* --- Menus and Status Bar (Ultra-Compact) --- */
+QMenuBar {
+    background-color: #F0F2F5;
+    border-bottom: 1px solid #D1D5DB; /* Softer, thinner bottom line */
+    padding: 0px; /* <-- REMOVES overall topbar bloat */
+}
+
+QMenuBar::item {
+    padding: 4px 10px; /* <-- TIGHTENS the spacing between File, View, etc. */
+    background: transparent;
+    color: #111827;
+}
+
+QMenuBar::item:selected {
+    background-color: #D1D5DB; /* Clean, compact highlight */
+}
+
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #BCC1CB;
+    padding: 2px; /* Snug border around the dropdown list */
+}
+
+QMenu::item {
+    padding: 4px 24px 4px 15px; /* Compact height for dropdown items */
+    color: #111827;
+}
+
+QMenu::item:selected {
+    background-color: #3B82F6;
+    color: #FFFFFF;
+    border-radius: 2px; /* Modern touch on hover */
+}
+
+QStatusBar {
+    background-color: #E2E6EA;
+    color: #374151;
+    border-top: 1px solid #BCC1CB;
+    padding: 2px;
+    min-height: 18px; /* <-- SHRINKS the height of the bottom status bar */
+}

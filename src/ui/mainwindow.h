@@ -26,6 +26,7 @@ private slots:
     void openSettingsDialog();
     void openHologramGenerator();
     void onTabChanged(int index);
+    void toggleTheme();
     void onRecordingTimeUpdated(const QString &timeString);
     void onFPSUpdated(const QString &fpsString); // for fps showing camera
     void savePhaseMask();
@@ -38,7 +39,7 @@ private:
     void createControls(QGridLayout *layout);
     void setupConnections();
     void applyDarkTheme();
-
+    void applyTheme(bool dark);
 
     // UI Pointers
     QGraphicsView *targetView;
@@ -67,6 +68,13 @@ private:
     int slmHeight = 1080;
     double slmPixelSize = 8.0;
     int cameraBackend = 0; // NEW: 0 = Qt, 1 = OpenCV
+    int camWidth = 1920;
+    int camHeight = 1080;
+    double camPixelSize = 5.0; // microns
+    double laserWavelength = 1064.0; // nm (Standard IR trapping laser)
+    double fourierFocalLength = 100.0; // mm
+
+    bool isDarkMode = true;
 };
 
 #endif // MAINWINDOW_H

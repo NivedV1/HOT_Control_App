@@ -25,24 +25,36 @@
 #include <QStandardPaths>
 #include <QDateTime>
 #include <QDir>
+#include <QApplication>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
     setMinimumSize(800, 600);
 
-    // Load saved hardware settings from the INI file
     QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
     QSettings settings(configPath, QSettings::IniFormat);
     
+    // Load SLM & Camera Engine
     slmWidth = settings.value("Hardware/SLM_Width", 1920).toInt();
     slmHeight = settings.value("Hardware/SLM_Height", 1080).toInt();
     slmPixelSize = settings.value("Hardware/SLM_PixelSize", 8.0).toDouble();
     cameraBackend = settings.value("Hardware/CameraBackend", 0).toInt();
+    
+    // Load Camera & Optics Setup
+    camWidth = settings.value("Hardware/Cam_Width", 1920).toInt();
+    camHeight = settings.value("Hardware/Cam_Height", 1080).toInt();
+    camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
+    laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
+    fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
+
+    // --- NEW: Load Theme Preference (Defaults to true/Dark Mode) ---
+    isDarkMode = settings.value("UI/DarkMode", true).toBool();
 
     setupUI();
-    applyDarkTheme();
     
-    // Initialize backend logic with the chosen camera engine
+    // --- CHANGED: Apply the loaded theme ---
+    applyTheme(isDarkMode); 
+    
     camManager = new CameraManager(cameraBackend, this);
     setupConnections();
 }
@@ -88,6 +100,12 @@ void MainWindow::createMenus() {
     fileMenu->addSeparator();
     fileMenu->addAction("Exit", this, &QWidget::close);
     
+    // --- NEW: View Menu ---
+    QMenu *viewMenu = menuBar()->addMenu("&View");
+    QAction *themeAction = viewMenu->addAction("Toggle Light/Dark Theme");
+    connect(themeAction, &QAction::triggered, this, &MainWindow::toggleTheme);
+    // ---------------------
+    
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
     QAction *holoAction = toolsMenu->addAction("Create Hologram...");
     connect(holoAction, &QAction::triggered, this, &MainWindow::openHologramGenerator);
@@ -103,22 +121,28 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     layout->addWidget(t1, 0, 0); layout->addWidget(t2, 0, 1); layout->addWidget(t3, 0, 2);
 
     // Row 1: Monitors
+// Row 1: Monitors
     targetView = new QGraphicsView();
     targetScene = new QGraphicsScene(this);
     targetView->setScene(targetScene);
-    targetView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Force the view to obey the grid, not its contents
+    targetView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
+    targetView->setMinimumSize(300, 200); // Prevent it from disappearing entirely
     layout->addWidget(targetView, 1, 0);
 
     phaseMaskLabel = new QLabel();
-    phaseMaskLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Force the label to obey the grid, not the phase mask resolution
+    phaseMaskLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
+    phaseMaskLabel->setMinimumSize(300, 200); 
     phaseMaskLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
     layout->addWidget(phaseMaskLabel, 1, 1);
 
-    // Changed to QLabel to support OpenCV's QImage output
     cameraFeedLabel = new QLabel("Camera Feed (Offline)");
     cameraFeedLabel->setAlignment(Qt::AlignCenter);
     cameraFeedLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
-    cameraFeedLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Force the label to obey the grid, not the webcam resolution
+    cameraFeedLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
+    cameraFeedLabel->setMinimumSize(300, 200); 
     layout->addWidget(cameraFeedLabel, 1, 2);
 
     // Row 2: Toolbars
@@ -268,9 +292,13 @@ void MainWindow::setupConnections() {
 // ==========================================
 
 void MainWindow::openSettingsDialog() {
-    SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend, this);
+    // Pass ALL variables to the dialog
+    SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend, 
+                          camWidth, camHeight, camPixelSize, 
+                          laserWavelength, fourierFocalLength, this);
     
     if (dialog.exec() == QDialog::Accepted) {
+        // 1. Update variables in RAM
         slmWidth = dialog.getWidth();
         slmHeight = dialog.getHeight();
         slmPixelSize = dialog.getPixelSize();
@@ -278,6 +306,13 @@ void MainWindow::openSettingsDialog() {
         bool backendChanged = (cameraBackend != dialog.getCameraBackend());
         cameraBackend = dialog.getCameraBackend(); 
         
+        camWidth = dialog.getCamWidth();
+        camHeight = dialog.getCamHeight();
+        camPixelSize = dialog.getCamPixelSize();
+        laserWavelength = dialog.getWavelength();
+        fourierFocalLength = dialog.getFocalLength();
+        
+        // 2. Save to INI file
         QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
         QSettings settings(configPath, QSettings::IniFormat);
         
@@ -285,8 +320,16 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/SLM_Height", slmHeight);
         settings.setValue("Hardware/SLM_PixelSize", slmPixelSize);
         settings.setValue("Hardware/CameraBackend", cameraBackend);
+        
+        settings.setValue("Hardware/Cam_Width", camWidth);
+        settings.setValue("Hardware/Cam_Height", camHeight);
+        settings.setValue("Hardware/Cam_PixelSize", camPixelSize);
+        settings.setValue("Optical/Wavelength", laserWavelength);
+        settings.setValue("Optical/FocalLength", fourierFocalLength);
+        
         settings.sync();
         
+        // 3. Update UI
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
         
         if (backendChanged) {
@@ -349,10 +392,35 @@ void MainWindow::onFPSUpdated(const QString &fpsString) {
     fpsLabel->setText(fpsString);
 }
 
-void MainWindow::applyDarkTheme() {
-    QFile file(":/theme.qss");
+// ==========================================
+// THEME MANAGEMENT
+// ==========================================
+
+void MainWindow::toggleTheme() {
+    // Flip the boolean
+    isDarkMode = !isDarkMode;
+    
+    // Apply the visual change
+    applyTheme(isDarkMode);
+    
+    // Save the new preference to the physical .ini file
+    QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
+    QSettings settings(configPath, QSettings::IniFormat);
+    settings.setValue("UI/DarkMode", isDarkMode);
+    settings.sync();
+}
+
+void MainWindow::applyTheme(bool dark) {
+    QString themeFile = dark ? ":/theme.qss" : ":/light_theme.qss";
+    
+    QFile file(themeFile);
     if (file.open(QFile::ReadOnly | QFile::Text)) {
-        this->setStyleSheet(QTextStream(&file).readAll());
+        
+        // --- CHANGED: Apply to the entire app, not just 'this' window ---
+        qApp->setStyleSheet(QTextStream(&file).readAll());
+        
         file.close();
+    } else {
+        qDebug() << "Failed to load theme file:" << themeFile;
     }
 }
