@@ -54,7 +54,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     camManager = new CameraManager(cameraBackend, this);
     setupConnections();
 
-    // --- NEW: Load the DLL dynamically at startup ---
+    // Load SLM DLL safely
     slmLibrary.setFileName(QCoreApplication::applicationDirPath() + "/Image_Control.dll");
     if (!slmLibrary.load()) {
         qWarning() << "Could not load Image_Control.dll! Ensure it is in the build folder.";
@@ -77,7 +77,6 @@ MainWindow::~MainWindow() {
 
 void MainWindow::setupUI() {
     createMenus();
-
     QWidget *centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
     QGridLayout *mainLayout = new QGridLayout(centralWidget);
@@ -99,8 +98,14 @@ void MainWindow::setupUI() {
 
 void MainWindow::createMenus() {
     QMenu *fileMenu = menuBar()->addMenu("&File");
+    
     QAction *settingsAction = fileMenu->addAction("Hardware Settings...");
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsDialog);
+    
+    // --- Correction Map loaded via File Menu ---
+    QAction *corrAction = fileMenu->addAction("Load SLM Correction Mask...");
+    connect(corrAction, &QAction::triggered, this, &MainWindow::loadCorrectionFile);
+    
     fileMenu->addSeparator();
     fileMenu->addAction("Exit", this, &QWidget::close);
     
@@ -149,6 +154,11 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     resolutionLabel = new QLabel(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
     phaseTools->addWidget(resolutionLabel);
     phaseTools->addStretch();
+    
+    previewCorrectionCb = new QCheckBox("Show Correction");
+    previewCorrectionCb->setEnabled(false); 
+    phaseTools->addWidget(previewCorrectionCb);
+    
     saveMaskBtn = new QPushButton("Save Mask");
     phaseTools->addWidget(saveMaskBtn);
     layout->addLayout(phaseTools, 2, 1);
@@ -280,14 +290,15 @@ void MainWindow::setupConnections() {
 
     if (camSelect->count() > 0) camManager->changeCamera(0);
 
-    // SLM loading and sending
+    // SLM Connections
     connect(loadPhaseBtn, &QPushButton::clicked, this, &MainWindow::loadPhasePattern);
     connect(sendSlmBtn, &QPushButton::clicked, this, &MainWindow::sendToSLM);
     connect(clearSlmBtn, &QPushButton::clicked, this, &MainWindow::clearSLM);
+    connect(previewCorrectionCb, &QCheckBox::toggled, this, &MainWindow::updatePhasePreview);
 }
 
 // ==========================================
-// SLOTS
+// CORE SLOTS
 // ==========================================
 
 void MainWindow::openSettingsDialog() {
@@ -316,13 +327,11 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/SLM_Height", slmHeight);
         settings.setValue("Hardware/SLM_PixelSize", slmPixelSize);
         settings.setValue("Hardware/CameraBackend", cameraBackend);
-        
         settings.setValue("Hardware/Cam_Width", camWidth);
         settings.setValue("Hardware/Cam_Height", camHeight);
         settings.setValue("Hardware/Cam_PixelSize", camPixelSize);
         settings.setValue("Optical/Wavelength", laserWavelength);
         settings.setValue("Optical/FocalLength", fourierFocalLength);
-        
         settings.sync();
         
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
@@ -338,10 +347,7 @@ void MainWindow::openSettingsDialog() {
 
 void MainWindow::openHologramGenerator() {
     HologramDialog dialog(slmWidth, slmHeight, this);
-    
-    // --- NEW: Connect the Dialog's signal to the MainWindow's slot ---
     connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
-    
     dialog.exec();
 }
 
@@ -355,11 +361,7 @@ void MainWindow::savePhaseMask() {
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     QString defaultFileName = QDir(defaultPath).filePath("PhaseMask_" + timestamp + ".png");
 
-    QString fileName = QFileDialog::getSaveFileName(this, 
-                                                    "Save Phase Mask", 
-                                                    defaultFileName, 
-                                                    "Images (*.png *.bmp *.jpg)");
-
+    QString fileName = QFileDialog::getSaveFileName(this, "Save Phase Mask", defaultFileName, "Images (*.png *.bmp *.jpg)");
     if (!fileName.isEmpty()) {
         if (phaseMaskLabel->pixmap().save(fileName)) {
             statusBar()->showMessage("Phase mask saved to: " + fileName, 5000);
@@ -403,45 +405,88 @@ void MainWindow::toggleTheme() {
 
 void MainWindow::applyTheme(bool dark) {
     QString themeFile = dark ? ":/theme.qss" : ":/light_theme.qss";
-    
     QFile file(themeFile);
     if (file.open(QFile::ReadOnly | QFile::Text)) {
         qApp->setStyleSheet(QTextStream(&file).readAll());
         file.close();
-    } else {
-        qDebug() << "Failed to load theme file:" << themeFile;
     }
 }
 
 // ==========================================
-// NEW: DYNAMIC SLM LOGIC
+// DYNAMIC SLM LOGIC & PREVIEW
 // ==========================================
+
+void MainWindow::updatePhasePreview() {
+    if (currentMask.isNull()) {
+        if (!correctionMask.isNull() && previewCorrectionCb->isChecked()) {
+            phaseMaskLabel->setPixmap(QPixmap::fromImage(correctionMask).scaled(
+                phaseMaskLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        } else {
+            phaseMaskLabel->clear();
+            phaseMaskLabel->setText(slmLibrary.isLoaded() ? "Cleared / Offline" : "SLM Offline");
+        }
+        return;
+    }
+
+    QImage displayMask = currentMask.copy();
+
+    if (previewCorrectionCb->isChecked() && !correctionMask.isNull()) {
+        if (correctionMask.size() == displayMask.size()) {
+            for (int y = 0; y < displayMask.height(); ++y) {
+                uchar *pRow = displayMask.scanLine(y);
+                const uchar *cRow = correctionMask.constScanLine(y);
+                for (int x = 0; x < displayMask.width(); ++x) {
+                    pRow[x] = static_cast<uchar>(pRow[x] + cRow[x]);
+                }
+            }
+        }
+    }
+
+    phaseMaskLabel->setPixmap(QPixmap::fromImage(displayMask).scaled(
+        phaseMaskLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void MainWindow::receiveHologram(const QImage &mask) {
+    currentMask = mask.convertToFormat(QImage::Format_Grayscale8);
+    updatePhasePreview();
+    statusBar()->showMessage("Generated Hologram loaded successfully.", 5000);
+}
 
 void MainWindow::loadPhasePattern() {
     QString fileName = QFileDialog::getOpenFileName(this, "Select Phase Mask", "", "Images (*.png *.bmp *.jpg)");
     if (!fileName.isEmpty()) {
         currentMask = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
-        
-        phaseMaskLabel->setPixmap(QPixmap::fromImage(currentMask).scaled(
-            phaseMaskLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-            
+        updatePhasePreview();
         statusBar()->showMessage("Mask loaded: " + fileName, 3000);
     }
 }
 
+void MainWindow::loadCorrectionFile() {
+    QString fileName = QFileDialog::getOpenFileName(this, "Select Flatness Correction Mask", "", "Images (*.png *.bmp *.jpg)");
+    if (!fileName.isEmpty()) {
+        correctionMask = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
+        previewCorrectionCb->setEnabled(true); 
+        
+        statusBar()->showMessage("Correction Mask loaded. Automatically sending to SLM...", 5000);
+        updatePhasePreview(); 
+        
+        // --- FIX: ALWAYS force a hardware update the moment it is loaded ---
+        sendToSLM(); 
+    }
+}
+
 void MainWindow::sendToSLM() {
-    if (currentMask.isNull()) {
-        QMessageBox::warning(this, "Error", "No mask loaded to send!");
+    // If absolutely nothing is loaded, abort.
+    if (currentMask.isNull() && correctionMask.isNull()) {
+        QMessageBox::warning(this, "Error", "No mask or correction loaded to send!");
         return;
     }
 
-    // Guard to ensure DLL loaded properly
     if (!slmLibrary.isLoaded()) {
         QMessageBox::critical(this, "DLL Error", "Image_Control.dll is not loaded.");
         return;
     }
 
-    // 1. Resolve the functions from the DLL dynamically
     auto winSettings = (Window_Settings_Func)slmLibrary.resolve("Window_Settings");
     auto winArrayToDisplay = (Window_Array_to_Display_Func)slmLibrary.resolve("Window_Array_to_Display");
 
@@ -450,41 +495,68 @@ void MainWindow::sendToSLM() {
         return;
     }
 
-    // 2. Open the SLM Window on monitor index 2 
+    QImage finalMask;
+
+    // --- FIX: If no hologram is loaded, use a flat 0-phase canvas ---
+    if (currentMask.isNull()) {
+        finalMask = QImage(slmWidth, slmHeight, QImage::Format_Grayscale8);
+        finalMask.fill(0); // Black = 0 phase shift
+    } else {
+        finalMask = currentMask.copy();
+    }
+
+    // Add Correction Mask (Modulo 256)
+    if (!correctionMask.isNull()) {
+        if (correctionMask.size() != finalMask.size()) {
+            QMessageBox::warning(this, "Correction Error", "Correction mask size does not match SLM resolution. Skipping correction.");
+        } else {
+            for (int y = 0; y < finalMask.height(); ++y) {
+                uchar *finalRow = finalMask.scanLine(y);
+                const uchar *corrRow = correctionMask.constScanLine(y);
+                for (int x = 0; x < finalMask.width(); ++x) {
+                    finalRow[x] = static_cast<uchar>(finalRow[x] + corrRow[x]);
+                }
+            }
+        }
+    }
+
+    // Push to Hardware
     winSettings(2, slmWindowID, 0, 0); 
+    
+    int width = finalMask.width();
+    int height = finalMask.height();
+    uint8_t* rawData = finalMask.bits(); 
 
-    // 3. Prepare the 1D Array for the SDK 
-    int width = currentMask.width();
-    int height = currentMask.height();
-    uint8_t* rawData = currentMask.bits(); 
-
-    // 4. Push data to SLM 
     winArrayToDisplay(rawData, width, height, slmWindowID, width * height);
 
-    statusBar()->showMessage("Phase Mask sent to SLM hardware.", 5000);
+    // Update Status Bar intelligently
+    if (!correctionMask.isNull() && currentMask.isNull()) {
+        statusBar()->showMessage("Background Correction Mask sent to SLM.", 5000);
+    } else if (!correctionMask.isNull()) {
+        statusBar()->showMessage("Phase Mask + Correction sent to SLM hardware.", 5000);
+    } else {
+        statusBar()->showMessage("Phase Mask sent to SLM hardware.", 5000);
+    }
 }
 
 void MainWindow::clearSLM() {
-    if (slmLibrary.isLoaded()) {
-        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
-        if (winTerm) {
-            winTerm(slmWindowID); 
-        }
-    }
-    phaseMaskLabel->clear();
-    phaseMaskLabel->setText("SLM Offline");
-    statusBar()->showMessage("SLM display terminated.", 3000);
-}
-
-// --- NEW: Function to receive the image and prepare it for the SLM ---
-void MainWindow::receiveHologram(const QImage &mask) {
-    // 1. Store it in the master variable used by the SendToSLM function
-    currentMask = mask;
+    currentMask = QImage(); // Wipe target mask from memory
+    updatePhasePreview();
     
-    // 2. Display it on the Phase Mask monitor
-    phaseMaskLabel->setPixmap(QPixmap::fromImage(currentMask).scaled(
-        phaseMaskLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    if (!slmLibrary.isLoaded()) return;
+
+    if (!correctionMask.isNull()) {
+        // --- FIX: Rely on the smarter sendToSLM() to handle the background mask ---
+        sendToSLM(); 
+        phaseMaskLabel->setText("Cleared (Correction Active)");
+        statusBar()->showMessage("Target cleared. SLM is maintaining hardware flatness correction.", 5000);
+    } else {
+        // No correction loaded at all, completely terminate display
+        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
+        if (winTerm) winTerm(slmWindowID); 
         
-    // 3. Update the status bar
-    statusBar()->showMessage("Generated Hologram loaded successfully. Ready to send to SLM.", 5000);
+        phaseMaskLabel->clear();
+        phaseMaskLabel->setText("SLM Offline");
+        statusBar()->showMessage("SLM display completely terminated.", 3000);
+    }
 }
