@@ -47,7 +47,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     settingsGroup->setLayout(form);
     
     generateBtn = new QPushButton("Generate Phase Mask");
-    generateBtn->setStyleSheet("QPushButton { font-weight: bold; padding: 10px; background-color: #2b5c8f; }");
+    generateBtn->setStyleSheet("QPushButton { font-weight: bold; padding: 10px; background-color: #2b5c8f; color: white; }");
     connect(generateBtn, &QPushButton::clicked, this, &HologramDialog::generatePattern);
     
     leftLayout->addWidget(settingsGroup);
@@ -64,26 +64,36 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     phasePreview = new QLabel("Click Generate");
     phasePreview->setAlignment(Qt::AlignCenter);
     
-    // --- THIS IS THE FIX ---
     // Force the black box to expand and push the title/button to the edges
     phasePreview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding); 
     phasePreview->setStyleSheet("background-color: black; border: 1px solid #555;");
     phasePreview->setMinimumSize(350, 350);
     phasePreview->setScaledContents(true);
     
+    // --- NEW: Button Layout ---
+    QHBoxLayout *buttonLayout = new QHBoxLayout();
+    
     saveBtn = new QPushButton("Save Mask As...");
     saveBtn->setEnabled(false);
     connect(saveBtn, &QPushButton::clicked, this, &HologramDialog::saveHologram);
     
+    sendToMainBtn = new QPushButton("Load to Main Screen");
+    sendToMainBtn->setEnabled(false);
+    connect(sendToMainBtn, &QPushButton::clicked, this, &HologramDialog::sendToMain);
+    
+    buttonLayout->addWidget(saveBtn);
+    buttonLayout->addWidget(sendToMainBtn);
+    
     rightLayout->addWidget(rightTitle);
     rightLayout->addWidget(phasePreview);
-    rightLayout->addWidget(saveBtn);
+    rightLayout->addLayout(buttonLayout); // Added the horizontal button layout here
 
     // Assemble layout
     // Give the right column a ratio of 2 so it takes up more space than the controls
     mainLayout->addLayout(leftLayout, 1);
     mainLayout->addLayout(rightLayout, 2); 
 }
+
 // ==========================================
 // MATHEMATICAL GENERATION LOGIC
 // ==========================================
@@ -126,6 +136,7 @@ void HologramDialog::generatePattern() {
     // Update the UI
     phasePreview->setPixmap(QPixmap::fromImage(currentPhaseImage));
     saveBtn->setEnabled(true);
+    sendToMainBtn->setEnabled(true); // --- NEW: Enable the Load button ---
 }
 
 void HologramDialog::saveHologram() {
@@ -135,5 +146,15 @@ void HologramDialog::saveHologram() {
     if (!fileName.isEmpty()) {
         currentPhaseImage.save(fileName);
         QMessageBox::information(this, "Success", "Phase mask saved successfully.");
+    } 
+}
+
+// ==========================================
+// NEW: BROADCAST TO MAIN WINDOW
+// ==========================================
+void HologramDialog::sendToMain() {
+    if (!currentPhaseImage.isNull()) {
+        emit maskReadyToLoad(currentPhaseImage); // Send the image data out
+        accept(); // Close the dialog
     }
 }

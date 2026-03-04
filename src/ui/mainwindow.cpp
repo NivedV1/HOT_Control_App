@@ -26,6 +26,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QApplication>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
@@ -34,37 +35,43 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
     QSettings settings(configPath, QSettings::IniFormat);
     
-    // Load SLM & Camera Engine
     slmWidth = settings.value("Hardware/SLM_Width", 1920).toInt();
     slmHeight = settings.value("Hardware/SLM_Height", 1080).toInt();
     slmPixelSize = settings.value("Hardware/SLM_PixelSize", 8.0).toDouble();
     cameraBackend = settings.value("Hardware/CameraBackend", 0).toInt();
     
-    // Load Camera & Optics Setup
     camWidth = settings.value("Hardware/Cam_Width", 1920).toInt();
     camHeight = settings.value("Hardware/Cam_Height", 1080).toInt();
     camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
     laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
     fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
 
-    // --- NEW: Load Theme Preference (Defaults to true/Dark Mode) ---
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
 
     setupUI();
-    
-    // --- CHANGED: Apply the loaded theme ---
     applyTheme(isDarkMode); 
     
     camManager = new CameraManager(cameraBackend, this);
     setupConnections();
+
+    // --- NEW: Load the DLL dynamically at startup ---
+    slmLibrary.setFileName(QCoreApplication::applicationDirPath() + "/Image_Control.dll");
+    if (!slmLibrary.load()) {
+        qWarning() << "Could not load Image_Control.dll! Ensure it is in the build folder.";
+    }
 }
 
 MainWindow::~MainWindow() {
-    // Safely stop the camera and delete the manager BEFORE the UI is destroyed
     if (camManager) {
         camManager->stopCamera();
         delete camManager;
         camManager = nullptr;
+    }
+    
+    // Safety check: close SLM if app is closed
+    if (slmLibrary.isLoaded()) {
+        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
+        if (winTerm) winTerm(slmWindowID);
     }
 }
 
@@ -76,11 +83,9 @@ void MainWindow::setupUI() {
     QGridLayout *mainLayout = new QGridLayout(centralWidget);
     mainLayout->setSpacing(10); 
 
-    // Build the Grid
     createMonitors(mainLayout);
     createControls(mainLayout);
 
-    // Grid Layout constraints
     mainLayout->setColumnStretch(0, 1);
     mainLayout->setColumnStretch(1, 1);
     mainLayout->setColumnStretch(2, 1);
@@ -89,7 +94,6 @@ void MainWindow::setupUI() {
     mainLayout->setRowStretch(2, 0); 
     mainLayout->setRowStretch(3, 2); 
 
-    // Status Bar
     statusBar()->addWidget(new QLabel(" SLM: Connected | Algorithm: GS "));
 }
 
@@ -100,11 +104,9 @@ void MainWindow::createMenus() {
     fileMenu->addSeparator();
     fileMenu->addAction("Exit", this, &QWidget::close);
     
-    // --- NEW: View Menu ---
     QMenu *viewMenu = menuBar()->addMenu("&View");
     QAction *themeAction = viewMenu->addAction("Toggle Light/Dark Theme");
     connect(themeAction, &QAction::triggered, this, &MainWindow::toggleTheme);
-    // ---------------------
     
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
     QAction *holoAction = toolsMenu->addAction("Create Hologram...");
@@ -114,24 +116,19 @@ void MainWindow::createMenus() {
 }
 
 void MainWindow::createMonitors(QGridLayout *layout) {
-    // Row 0: Titles
     QLabel *t1 = new QLabel("Target Pattern"); t1->setAlignment(Qt::AlignCenter);
     QLabel *t2 = new QLabel("Phase Mask"); t2->setAlignment(Qt::AlignCenter);
     QLabel *t3 = new QLabel("Live Camera Feed"); t3->setAlignment(Qt::AlignCenter);
     layout->addWidget(t1, 0, 0); layout->addWidget(t2, 0, 1); layout->addWidget(t3, 0, 2);
 
-    // Row 1: Monitors
-// Row 1: Monitors
     targetView = new QGraphicsView();
     targetScene = new QGraphicsScene(this);
     targetView->setScene(targetScene);
-    // Force the view to obey the grid, not its contents
     targetView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
-    targetView->setMinimumSize(300, 200); // Prevent it from disappearing entirely
+    targetView->setMinimumSize(300, 200); 
     layout->addWidget(targetView, 1, 0);
 
     phaseMaskLabel = new QLabel();
-    // Force the label to obey the grid, not the phase mask resolution
     phaseMaskLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
     phaseMaskLabel->setMinimumSize(300, 200); 
     phaseMaskLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
@@ -140,12 +137,10 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     cameraFeedLabel = new QLabel("Camera Feed (Offline)");
     cameraFeedLabel->setAlignment(Qt::AlignCenter);
     cameraFeedLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
-    // Force the label to obey the grid, not the webcam resolution
     cameraFeedLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
     cameraFeedLabel->setMinimumSize(300, 200); 
     layout->addWidget(cameraFeedLabel, 1, 2);
 
-    // Row 2: Toolbars
     QHBoxLayout *targetTools = new QHBoxLayout();
     targetTools->addSpacerItem(new QSpacerItem(10, 28, QSizePolicy::Minimum, QSizePolicy::Fixed));
     layout->addLayout(targetTools, 2, 0);
@@ -167,7 +162,6 @@ void MainWindow::createMonitors(QGridLayout *layout) {
 }
 
 void MainWindow::createControls(QGridLayout *layout) {
-    // 3, 0: Target Tabs & Trap List
     QVBoxLayout *leftCol = new QVBoxLayout();
     targetModeTabs = new QTabWidget();
     
@@ -200,7 +194,6 @@ void MainWindow::createControls(QGridLayout *layout) {
     leftCol->addWidget(trapListContainer);
     layout->addLayout(leftCol, 3, 0);
 
-    // 3, 1: Algorithm Settings
     QVBoxLayout *midCol = new QVBoxLayout();
     QGroupBox *algoGroup = new QGroupBox("Algorithm Settings");
     QFormLayout *algoForm = new QFormLayout();
@@ -214,7 +207,6 @@ void MainWindow::createControls(QGridLayout *layout) {
     midCol->addStretch();
     layout->addLayout(midCol, 3, 1);
 
-    // 3, 2: Camera & SLM Controls
     QVBoxLayout *rightCol = new QVBoxLayout();
     
     QGroupBox *camGroup = new QGroupBox("Camera Control");
@@ -248,9 +240,15 @@ void MainWindow::createControls(QGridLayout *layout) {
     QLabel *slmStatus = new QLabel("SLM: Connected");
     slmStatus->setStyleSheet("color: #4CAF50; font-weight: bold;");
     slmLayout->addWidget(slmStatus);
-    slmLayout->addWidget(new QPushButton("Load Existing Phase Pattern"));
-    slmLayout->addWidget(new QPushButton("Load Correction File"));
-    slmLayout->addWidget(new QPushButton("Clear SLM Pattern"));
+    
+    loadPhaseBtn = new QPushButton("Load Phase Mask");
+    sendSlmBtn = new QPushButton("Send to SLM");
+    clearSlmBtn = new QPushButton("Clear SLM");
+
+    slmLayout->addWidget(loadPhaseBtn);
+    slmLayout->addWidget(sendSlmBtn);
+    slmLayout->addWidget(clearSlmBtn);
+    
     slmGroup->setLayout(slmLayout);
 
     rightCol->addWidget(camGroup);
@@ -260,23 +258,19 @@ void MainWindow::createControls(QGridLayout *layout) {
 }
 
 void MainWindow::setupConnections() {
-    // Populate camera dropdown
     for (const QString &camName : camManager->getCameraNames()) {
         camSelect->addItem(camName);
     }
 
-    // UI Connections
     connect(targetModeTabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
     connect(saveMaskBtn, &QPushButton::clicked, this, &MainWindow::savePhaseMask);
 
-    // Camera Connections
     connect(camSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), camManager, &CameraManager::changeCamera);
     connect(camStartBtn, &QPushButton::clicked, camManager, &CameraManager::startCamera);
     connect(camStopBtn, &QPushButton::clicked, camManager, &CameraManager::stopCamera);
     connect(captureImageBtn, &QPushButton::clicked, camManager, &CameraManager::captureImage);
     connect(recordVideoBtn, &QPushButton::toggled, camManager, &CameraManager::toggleRecording);
     
-    // Connect backend signals back to UI
     connect(camManager, &CameraManager::frameReady, this, &MainWindow::updateCameraFeed);
     connect(camManager, &CameraManager::statusMessage, this, [this](const QString &msg){
         statusBar()->showMessage(msg);
@@ -285,6 +279,11 @@ void MainWindow::setupConnections() {
     connect(camManager, &CameraManager::fpsUpdated, this, &MainWindow::onFPSUpdated);
 
     if (camSelect->count() > 0) camManager->changeCamera(0);
+
+    // SLM loading and sending
+    connect(loadPhaseBtn, &QPushButton::clicked, this, &MainWindow::loadPhasePattern);
+    connect(sendSlmBtn, &QPushButton::clicked, this, &MainWindow::sendToSLM);
+    connect(clearSlmBtn, &QPushButton::clicked, this, &MainWindow::clearSLM);
 }
 
 // ==========================================
@@ -292,13 +291,11 @@ void MainWindow::setupConnections() {
 // ==========================================
 
 void MainWindow::openSettingsDialog() {
-    // Pass ALL variables to the dialog
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend, 
                           camWidth, camHeight, camPixelSize, 
                           laserWavelength, fourierFocalLength, this);
     
     if (dialog.exec() == QDialog::Accepted) {
-        // 1. Update variables in RAM
         slmWidth = dialog.getWidth();
         slmHeight = dialog.getHeight();
         slmPixelSize = dialog.getPixelSize();
@@ -312,7 +309,6 @@ void MainWindow::openSettingsDialog() {
         laserWavelength = dialog.getWavelength();
         fourierFocalLength = dialog.getFocalLength();
         
-        // 2. Save to INI file
         QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
         QSettings settings(configPath, QSettings::IniFormat);
         
@@ -329,7 +325,6 @@ void MainWindow::openSettingsDialog() {
         
         settings.sync();
         
-        // 3. Update UI
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
         
         if (backendChanged) {
@@ -343,6 +338,10 @@ void MainWindow::openSettingsDialog() {
 
 void MainWindow::openHologramGenerator() {
     HologramDialog dialog(slmWidth, slmHeight, this);
+    
+    // --- NEW: Connect the Dialog's signal to the MainWindow's slot ---
+    connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
+    
     dialog.exec();
 }
 
@@ -392,18 +391,10 @@ void MainWindow::onFPSUpdated(const QString &fpsString) {
     fpsLabel->setText(fpsString);
 }
 
-// ==========================================
-// THEME MANAGEMENT
-// ==========================================
-
 void MainWindow::toggleTheme() {
-    // Flip the boolean
     isDarkMode = !isDarkMode;
-    
-    // Apply the visual change
     applyTheme(isDarkMode);
     
-    // Save the new preference to the physical .ini file
     QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
     QSettings settings(configPath, QSettings::IniFormat);
     settings.setValue("UI/DarkMode", isDarkMode);
@@ -415,12 +406,85 @@ void MainWindow::applyTheme(bool dark) {
     
     QFile file(themeFile);
     if (file.open(QFile::ReadOnly | QFile::Text)) {
-        
-        // --- CHANGED: Apply to the entire app, not just 'this' window ---
         qApp->setStyleSheet(QTextStream(&file).readAll());
-        
         file.close();
     } else {
         qDebug() << "Failed to load theme file:" << themeFile;
     }
+}
+
+// ==========================================
+// NEW: DYNAMIC SLM LOGIC
+// ==========================================
+
+void MainWindow::loadPhasePattern() {
+    QString fileName = QFileDialog::getOpenFileName(this, "Select Phase Mask", "", "Images (*.png *.bmp *.jpg)");
+    if (!fileName.isEmpty()) {
+        currentMask = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
+        
+        phaseMaskLabel->setPixmap(QPixmap::fromImage(currentMask).scaled(
+            phaseMaskLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            
+        statusBar()->showMessage("Mask loaded: " + fileName, 3000);
+    }
+}
+
+void MainWindow::sendToSLM() {
+    if (currentMask.isNull()) {
+        QMessageBox::warning(this, "Error", "No mask loaded to send!");
+        return;
+    }
+
+    // Guard to ensure DLL loaded properly
+    if (!slmLibrary.isLoaded()) {
+        QMessageBox::critical(this, "DLL Error", "Image_Control.dll is not loaded.");
+        return;
+    }
+
+    // 1. Resolve the functions from the DLL dynamically
+    auto winSettings = (Window_Settings_Func)slmLibrary.resolve("Window_Settings");
+    auto winArrayToDisplay = (Window_Array_to_Display_Func)slmLibrary.resolve("Window_Array_to_Display");
+
+    if (!winSettings || !winArrayToDisplay) {
+        QMessageBox::critical(this, "DLL Error", "Could not find SLM functions inside the DLL.");
+        return;
+    }
+
+    // 2. Open the SLM Window on monitor index 2 
+    winSettings(2, slmWindowID, 0, 0); 
+
+    // 3. Prepare the 1D Array for the SDK 
+    int width = currentMask.width();
+    int height = currentMask.height();
+    uint8_t* rawData = currentMask.bits(); 
+
+    // 4. Push data to SLM 
+    winArrayToDisplay(rawData, width, height, slmWindowID, width * height);
+
+    statusBar()->showMessage("Phase Mask sent to SLM hardware.", 5000);
+}
+
+void MainWindow::clearSLM() {
+    if (slmLibrary.isLoaded()) {
+        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
+        if (winTerm) {
+            winTerm(slmWindowID); 
+        }
+    }
+    phaseMaskLabel->clear();
+    phaseMaskLabel->setText("SLM Offline");
+    statusBar()->showMessage("SLM display terminated.", 3000);
+}
+
+// --- NEW: Function to receive the image and prepare it for the SLM ---
+void MainWindow::receiveHologram(const QImage &mask) {
+    // 1. Store it in the master variable used by the SendToSLM function
+    currentMask = mask;
+    
+    // 2. Display it on the Phase Mask monitor
+    phaseMaskLabel->setPixmap(QPixmap::fromImage(currentMask).scaled(
+        phaseMaskLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        
+    // 3. Update the status bar
+    statusBar()->showMessage("Generated Hologram loaded successfully. Ready to send to SLM.", 5000);
 }
