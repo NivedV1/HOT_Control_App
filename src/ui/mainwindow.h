@@ -11,12 +11,14 @@
 #include <QPushButton>
 #include <QCheckBox> 
 #include <QImage>
+#include <QMap>
 #include <cstdint> 
 #include <QLibrary> // For dynamic DLL loading
 
 // Forward declarations
 class CameraManager;
 class QGridLayout;
+class TargetGridWidget;
 
 // --- DLL Function Pointers (Bypasses the need for LabVIEW's extcode.h) ---
 typedef void (__stdcall *Window_Settings_Func)(int32_t MonitorNumber, int32_t WindowNumber015, int32_t XPixelShift, int32_t YPixelShift);
@@ -46,21 +48,42 @@ private slots:
     void loadCorrectionFile();  // Connected to the File Menu
     void sendToSLM();           
     void clearSLM();            
+    
+    // Grid Widget Slots
+    void onGridPointAdded(int pointId, QPointF physicalCoords);
+    void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
+    void onGridPointRemoved(int pointId);
+    void onGridPointSelected(int pointId);            
 
 private:
+    // Grid enlargement/minimize
+    bool gridEnlarged = false;
+    QWidget *gridTitleBar = nullptr;
+    QPushButton *gridMaxMinBtn = nullptr;
+    QWidget *controlsWidget = nullptr;
+    QGridLayout *mainLayout = nullptr;
+    
+    // Control section wrappers for hiding/showing
+    QWidget *toolsRow = nullptr;      // Row 2 with tools
+    QWidget *controlsRow = nullptr;   // Row 3 with main controls
+
     void setupUI();
     void createMenus();
     void createMonitors(QGridLayout *layout);
     void createControls(QGridLayout *layout);
     void setupConnections();
     void applyTheme(bool dark);
+    void toggleGridEnlarged();
     
     // Helper function to manage the preview screen 
     void updatePhasePreview();
 
+    // returns a full-resolution image that combines currentMask and correctionMask (modulo 256)
+    // if both masks are empty the returned image will be null
+    QImage composeFullResolutionMask() const;
+
     // UI Pointers
-    QGraphicsView *targetView;
-    QGraphicsScene *targetScene;
+    TargetGridWidget *targetGridWidget;
     QTabWidget *targetModeTabs;
     QWidget *trapListContainer;
     QTableWidget *trapTable;
@@ -69,6 +92,9 @@ private:
     QLabel *fpsLabel;
     QCheckBox *previewCorrectionCb; 
     QPushButton *saveMaskBtn;
+    QPushButton *addTrapBtn;
+    QPushButton *removeTrapBtn;
+    QPushButton *clearTrapsBtn;
     
     QLabel *cameraFeedLabel;
     QComboBox *camSelect;
@@ -102,6 +128,10 @@ private:
     QImage currentMask;     // The target hologram
     QImage correctionMask;  // The physical flatness correction
     QLibrary slmLibrary;    // Dynamic DLL Loader
+    
+    // Grid point data
+    QMap<int, QPointF> gridPointData;  // Maps point ID to physical coordinates
+    int selectedPointId = -1;
 };
 
 #endif // MAINWINDOW_H

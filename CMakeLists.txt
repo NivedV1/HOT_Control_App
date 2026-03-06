@@ -29,6 +29,7 @@ set(SOURCES
     src/core/algorithms/gs_algorithm.cpp
     src/hardware/slm_controller.cpp
     src/hardware/camera_stream.cpp
+    src/ui/components/targetgridwidget.cpp
 )
 
 # Define header files
@@ -39,6 +40,7 @@ set(HEADERS
     src/ui/hologramdialog.h
     src/ui/components/traptable.h
     src/ui/components/patternview.h
+    src/ui/components/targetgridwidget.h
     src/core/trap_manager.h
     src/core/algorithms/phase_algorithm.h
     src/core/algorithms/gs_algorithm.h

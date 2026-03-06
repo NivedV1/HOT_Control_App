@@ -142,7 +142,7 @@ void HologramDialog::generatePattern() {
 void HologramDialog::saveHologram() {
     if (currentPhaseImage.isNull()) return;
 
-    QString fileName = QFileDialog::getSaveFileName(this, "Save Phase Mask", "Grating_Mask.png", "Images (*.png *.bmp)");
+    QString fileName = QFileDialog::getSaveFileName(this, "Save Phase Mask", "Grating_Mask.bmp", "Images (*.png *.bmp)");
     if (!fileName.isEmpty()) {
         currentPhaseImage.save(fileName);
         QMessageBox::information(this, "Success", "Phase mask saved successfully.");
