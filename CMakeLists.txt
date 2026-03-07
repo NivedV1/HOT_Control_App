@@ -52,6 +52,7 @@ set(HEADERS
 # Define resource files
 set(RESOURCES
     resources/resources.qrc
+    resources/app_icon.rc
 )
 
 # Create the executable

@@ -31,6 +31,7 @@
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
+    setWindowIcon(QIcon(":/favicon.ico"));
     setMinimumSize(800, 600);
 
     QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
@@ -131,9 +132,8 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     gridTitleBar = new QWidget();
     QHBoxLayout *titleBarLayout = new QHBoxLayout(gridTitleBar);
     titleBarLayout->setContentsMargins(5, 3, 5, 3);
-    QLabel *titleLabel = new QLabel("Grid View");
-    titleLabel->setStyleSheet("color: #aaa; font-size: 11px; font-weight: bold;");
-    titleBarLayout->addWidget(titleLabel);
+    gridTitleLabel = new QLabel("Grid View");
+    titleBarLayout->addWidget(gridTitleLabel);
     titleBarLayout->addStretch();
     
     gridMaxMinBtn = new QPushButton();
@@ -143,13 +143,13 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     gridMaxMinBtn->setStyleSheet("padding: 0px; font-size: 12px;");
     titleBarLayout->addWidget(gridMaxMinBtn);
     gridTitleBar->setLayout(titleBarLayout);
-    gridTitleBar->setStyleSheet("background-color: #2a2a2a; border: 1px solid #444;");
+    gridTitleBar->setObjectName("gridTitleBar");
     
     layout->addWidget(gridTitleBar, 0, 0);
     connect(gridMaxMinBtn, &QPushButton::clicked, this, &MainWindow::toggleGridEnlarged);
 
-    // Create grid with SLM resolution dimensions
-    targetGridWidget = new TargetGridWidget(slmWidth, slmHeight);
+    // Create grid with camera resolution dimensions
+    targetGridWidget = new TargetGridWidget(camWidth, camHeight);
     targetGridWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
     targetGridWidget->setMinimumSize(300, 200); 
     layout->addWidget(targetGridWidget, 1, 0);
@@ -158,42 +158,16 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     QWidget *phaseColumn = new QWidget();
     QVBoxLayout *phaseColLayout = new QVBoxLayout(phaseColumn);
     phaseColLayout->setContentsMargins(0, 0, 0, 0);
-    phaseColLayout->setSpacing(0);
+    phaseColLayout->setSpacing(5);
     
     phaseMaskLabel = new QLabel();
-    phaseMaskLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
+    phaseMaskLabel->setObjectName("phaseMaskLabel");
+    phaseMaskLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding); 
     phaseMaskLabel->setMinimumSize(300, 200);
     phaseMaskLabel->setScaledContents(true);  // Auto-scale pixmap with label size
-    phaseMaskLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
     phaseColLayout->addWidget(phaseMaskLabel);
-    phaseColumn->setLayout(phaseColLayout);
-    layout->addWidget(phaseColumn, 1, 1);
-
-    // Wrapper for column 2 (camera feed)
-    QWidget *cameraColumn = new QWidget();
-    QVBoxLayout *cameraColLayout = new QVBoxLayout(cameraColumn);
-    cameraColLayout->setContentsMargins(0, 0, 0, 0);
-    cameraColLayout->setSpacing(0);
     
-    cameraFeedLabel = new QLabel("Camera Feed (Offline)");
-    cameraFeedLabel->setAlignment(Qt::AlignCenter);
-    cameraFeedLabel->setScaledContents(true);  // Auto-scale pixmap with label size
-    cameraFeedLabel->setStyleSheet("background-color: black; border: 1px solid #444;");
-    cameraFeedLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored); 
-    cameraFeedLabel->setMinimumSize(300, 200); 
-    cameraColLayout->addWidget(cameraFeedLabel);
-    cameraColumn->setLayout(cameraColLayout);
-    layout->addWidget(cameraColumn, 1, 2);
-
-    // Create wrapper for tools row (row 2) spanning all columns
-    toolsRow = new QWidget();
-    QGridLayout *toolsRowLayout = new QGridLayout(toolsRow);
-    toolsRowLayout->setContentsMargins(0, 0, 0, 0);
-    toolsRowLayout->setSpacing(10);
-
-    QHBoxLayout *targetTools = new QHBoxLayout();
-    targetTools->addSpacerItem(new QSpacerItem(10, 28, QSizePolicy::Minimum, QSizePolicy::Fixed));
-    
+    // Phase mask tools
     QHBoxLayout *phaseTools = new QHBoxLayout();
     resolutionLabel = new QLabel(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
     phaseTools->addWidget(resolutionLabel);
@@ -205,17 +179,46 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     
     saveMaskBtn = new QPushButton("Save Mask");
     phaseTools->addWidget(saveMaskBtn);
+    
+    phaseColLayout->addLayout(phaseTools);
+    phaseColumn->setLayout(phaseColLayout);
+    layout->addWidget(phaseColumn, 1, 1);
 
+    // Wrapper for column 2 (camera feed)
+    QWidget *cameraColumn = new QWidget();
+    QVBoxLayout *cameraColLayout = new QVBoxLayout(cameraColumn);
+    cameraColLayout->setContentsMargins(0, 0, 0, 0);
+    cameraColLayout->setSpacing(5);
+    
+    cameraFeedLabel = new QLabel("Camera Feed (Offline)");
+    cameraFeedLabel->setObjectName("cameraFeedLabel");
+    cameraFeedLabel->setAlignment(Qt::AlignCenter);
+    cameraFeedLabel->setScaledContents(true);  // Auto-scale pixmap with label size
+    cameraFeedLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding); 
+    cameraFeedLabel->setMinimumSize(300, 200); 
+    cameraColLayout->addWidget(cameraFeedLabel);
+    
+    // Camera tools
     QHBoxLayout *camTools = new QHBoxLayout();
     fpsLabel = new QLabel("FPS: 0");
     camTools->addWidget(fpsLabel);
     camTools->addStretch();
     camTools->addWidget(new QCheckBox("Overlay Target"));
     
-    toolsRowLayout->addLayout(targetTools, 0, 0);
-    toolsRowLayout->addLayout(phaseTools, 0, 1);
-    toolsRowLayout->addLayout(camTools, 0, 2);
-    toolsRow->setLayout(toolsRowLayout);
+    cameraColLayout->addLayout(camTools);
+    cameraColumn->setLayout(cameraColLayout);
+    layout->addWidget(cameraColumn, 1, 2);
+
+    // Create wrapper for tools row (row 2) - grid column tools
+    toolsRow = new QWidget();
+    QHBoxLayout *gridToolsLayout = new QHBoxLayout(toolsRow);
+    gridToolsLayout->setContentsMargins(0, 0, 0, 0);
+    gridToolsLayout->setSpacing(10);
+    
+    gridToolsLayout->addSpacing(10);  // Spacer for target grid column
+    gridToolsLayout->addStretch();
+    
+    toolsRow->setLayout(gridToolsLayout);
     layout->addWidget(toolsRow, 2, 0, 1, 3);
 }
 
@@ -447,7 +450,7 @@ void MainWindow::openSettingsDialog() {
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
         
         // Update grid resolution dynamically
-        targetGridWidget->setGridResolution(slmWidth, slmHeight);
+        targetGridWidget->setGridResolution(camWidth, camHeight);
         targetGridWidget->centerView();
         targetGridWidget->clearAllPoints();
         
@@ -463,6 +466,7 @@ void MainWindow::openSettingsDialog() {
 void MainWindow::openHologramGenerator() {
     HologramDialog dialog(slmWidth, slmHeight, this);
     connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
+    connect(&dialog, &HologramDialog::sendToSLMRequested, this, &MainWindow::sendHologramToSLM);
     dialog.exec();
 }
 
@@ -477,7 +481,7 @@ void MainWindow::savePhaseMask() {
 
     QString defaultPath = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    QString defaultFileName = QDir(defaultPath).filePath("PhaseMask_" + timestamp + ".png");
+    QString defaultFileName = QDir(defaultPath).filePath("PhaseMask_" + timestamp + ".bmp");
 
     QString fileName = QFileDialog::getSaveFileName(this, "Save Phase Mask", defaultFileName, "Images (*.png *.bmp *.jpg)");
     if (!fileName.isEmpty()) {
@@ -591,6 +595,26 @@ void MainWindow::applyTheme(bool dark) {
         qApp->setStyleSheet(QTextStream(&file).readAll());
         file.close();
     }
+    
+    // Update grid title bar styling
+    if (gridTitleBar) {
+        if (dark) {
+            gridTitleBar->setStyleSheet("background-color: #3c3f41; border: 1px solid #555;");
+            if (gridTitleLabel) {
+                gridTitleLabel->setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: bold;");
+            }
+        } else {
+            gridTitleBar->setStyleSheet("background-color: #e2e6ea; border: 1px solid #bcc1cb;");
+            if (gridTitleLabel) {
+                gridTitleLabel->setStyleSheet("color: #111827; font-size: 11px; font-weight: bold;");
+            }
+        }
+    }
+    
+    // Update grid widget theme
+    if (targetGridWidget) {
+        targetGridWidget->setDarkMode(dark);
+    }
 }
 
 // ==========================================
@@ -669,6 +693,24 @@ void MainWindow::receiveHologram(const QImage &mask) {
     
     updatePhasePreview();
     statusBar()->showMessage("Generated Hologram loaded successfully (resized to " + QString::number(slmWidth) + "x" + QString::number(slmHeight) + ").", 5000);
+}
+
+void MainWindow::sendHologramToSLM(const QImage &mask) {
+    // Set the current mask to the generated hologram
+    currentMask = mask.convertToFormat(QImage::Format_Grayscale8);
+    
+    // Resize to SLM dimensions if needed
+    if (currentMask.size() != QSize(slmWidth, slmHeight)) {
+        currentMask = currentMask.scaled(slmWidth, slmHeight);
+    }
+    
+    // Update the preview
+    updatePhasePreview();
+    
+    // Send directly to SLM
+    sendToSLM();
+    
+    statusBar()->showMessage("Generated Hologram sent directly to SLM.", 5000);
 }
 
 void MainWindow::loadPhasePattern() {

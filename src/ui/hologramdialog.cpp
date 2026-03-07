@@ -29,7 +29,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     QFormLayout *form = new QFormLayout();
     
     patternTypeCombo = new QComboBox();
-    patternTypeCombo->addItems({"Blazed Grating (Prism)", "Binary Grating"});
+    patternTypeCombo->addItems({"Blazed Grating (Prism)", "Binary Grating", "Fresnel Lens", "Axicon", "Vortex Beam", "Sinusoidal Grating", "Checkerboard"});
     
     periodSpin = new QDoubleSpinBox();
     periodSpin->setRange(2.0, 1000.0);
@@ -41,10 +41,40 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     angleSpin->setValue(0.0);
     angleSpin->setSuffix(" °");
     
+    // Additional parameters for new patterns
+    focalLengthSpin = new QDoubleSpinBox();
+    focalLengthSpin->setRange(10.0, 10000.0);
+    focalLengthSpin->setValue(500.0);
+    focalLengthSpin->setSuffix(" pixels");
+    
+    coneAngleSpin = new QDoubleSpinBox();
+    coneAngleSpin->setRange(0.1, 45.0);
+    coneAngleSpin->setValue(5.0);
+    coneAngleSpin->setSuffix(" °");
+    
+    topologicalChargeSpin = new QSpinBox();
+    topologicalChargeSpin->setRange(1, 10);
+    topologicalChargeSpin->setValue(1);
+    
+    amplitudeSpin = new QDoubleSpinBox();
+    amplitudeSpin->setRange(0.0, 1.0);
+    amplitudeSpin->setValue(0.5);
+    amplitudeSpin->setSingleStep(0.1);
+    
     form->addRow("Pattern Type:", patternTypeCombo);
     form->addRow("Grating Period:", periodSpin);
     form->addRow("Rotation Angle:", angleSpin);
+    form->addRow("Focal Length:", focalLengthSpin);
+    form->addRow("Cone Angle:", coneAngleSpin);
+    form->addRow("Topological Charge:", topologicalChargeSpin);
+    form->addRow("Amplitude:", amplitudeSpin);
     settingsGroup->setLayout(form);
+    
+    // Initially hide parameters not relevant to default pattern
+    updateParameterVisibility();
+    
+    // Connect pattern type change to parameter visibility update
+    connect(patternTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &HologramDialog::updateParameterVisibility);
     
     generateBtn = new QPushButton("Generate Phase Mask");
     generateBtn->setStyleSheet("QPushButton { font-weight: bold; padding: 10px; background-color: #2b5c8f; color: white; }");
@@ -81,8 +111,14 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     sendToMainBtn->setEnabled(false);
     connect(sendToMainBtn, &QPushButton::clicked, this, &HologramDialog::sendToMain);
     
+    sendToSLMBtn = new QPushButton("Send to SLM");
+    sendToSLMBtn->setEnabled(false);
+    sendToSLMBtn->setStyleSheet("QPushButton { font-weight: bold; background-color: #dc3545; color: white; }");
+    connect(sendToSLMBtn, &QPushButton::clicked, this, &HologramDialog::sendToSLM);
+    
     buttonLayout->addWidget(saveBtn);
     buttonLayout->addWidget(sendToMainBtn);
+    buttonLayout->addWidget(sendToSLMBtn);
     
     rightLayout->addWidget(rightTitle);
     rightLayout->addWidget(phasePreview);
@@ -107,6 +143,10 @@ void HologramDialog::generatePattern() {
     
     double cosA = std::cos(angleRad);
     double sinA = std::sin(angleRad);
+    
+    // Pattern centering coordinates
+    double centerX = targetWidth / 2.0;
+    double centerY = targetHeight / 2.0;
 
     // Iterate through every pixel of the SLM
     for (int y = 0; y < targetHeight; ++y) {
@@ -115,6 +155,14 @@ void HologramDialog::generatePattern() {
             
             // Calculate rotated projection distance for 1D gratings
             double proj = x * cosA + y * sinA;
+            
+            // Calculate coordinates relative to center for rotated 2D patterns
+            double cx = x - centerX;
+            double cy = y - centerY;
+            
+            // Apply 2D rotation matrix around the center
+            double rotX = cx * cosA - cy * sinA;
+            double rotY = cx * sinA + cy * cosA;
             
             if (type == 0) {
                 // 1. BLAZED GRATING
@@ -128,7 +176,17 @@ void HologramDialog::generatePattern() {
                 // Phase jumps between 0 and pi (0 and 128) halfway through the period
                 double mod = std::fmod(proj, period);
                 if (mod < 0) mod += period;
-                row[x] = (mod < (period / 2.0)) ? 0 : 128; // 128 = Pi phase shift
+                row[x] = (mod < (period/2 )) ? 0 : 128; // 128 = Pi phase shift
+            } else if (type == 6) {
+                // 7. CHECKERBOARD
+                // Phase alternates between 0 and pi (0 and 128) based on rotated grid
+                // Use floor to correctly tile negative space without reflection
+                int checkerX = static_cast<int>(std::floor(rotX / period));
+                int checkerY = static_cast<int>(std::floor(rotY / period));
+                
+                // (checkerX + checkerY) % 2 == 0 is slightly problematic with negative numbers 
+                // in C++ (% can return negative). Use bitwise check for even/odd parity.
+                row[x] = ((std::abs(checkerX + checkerY) % 2) == 0) ? 0 : 128;
             }
         }
     }
@@ -137,6 +195,7 @@ void HologramDialog::generatePattern() {
     phasePreview->setPixmap(QPixmap::fromImage(currentPhaseImage));
     saveBtn->setEnabled(true);
     sendToMainBtn->setEnabled(true); // --- NEW: Enable the Load button ---
+    sendToSLMBtn->setEnabled(true); // --- NEW: Enable the Send to SLM button ---
 }
 
 void HologramDialog::saveHologram() {
@@ -156,5 +215,57 @@ void HologramDialog::sendToMain() {
     if (!currentPhaseImage.isNull()) {
         emit maskReadyToLoad(currentPhaseImage); // Send the image data out
         accept(); // Close the dialog
+    }
+}
+
+// ==========================================
+// NEW: SEND DIRECTLY TO SLM
+// ==========================================
+void HologramDialog::sendToSLM() {
+    if (!currentPhaseImage.isNull()) {
+        emit sendToSLMRequested(currentPhaseImage); // Send the image data to SLM
+        accept(); // Close the dialog
+    }
+}
+
+// ==========================================
+// PARAMETER VISIBILITY MANAGEMENT
+// ==========================================
+void HologramDialog::updateParameterVisibility() {
+    int patternType = patternTypeCombo->currentIndex();
+    
+    // Hide all parameters by default
+    periodSpin->setVisible(false);
+    angleSpin->setVisible(false);
+    focalLengthSpin->setVisible(false);
+    coneAngleSpin->setVisible(false);
+    topologicalChargeSpin->setVisible(false);
+    amplitudeSpin->setVisible(false);
+    
+    // Show relevant parameters based on pattern type
+    switch (patternType) {
+        case 0: // Blazed Grating
+        case 1: // Binary Grating
+            periodSpin->setVisible(true);
+            angleSpin->setVisible(true);
+            break;
+        case 2: // Fresnel Lens
+            focalLengthSpin->setVisible(true);
+            break;
+        case 3: // Axicon
+            coneAngleSpin->setVisible(true);
+            break;
+        case 4: // Vortex Beam
+            topologicalChargeSpin->setVisible(true);
+            break;
+        case 5: // Sinusoidal Grating
+            periodSpin->setVisible(true);
+            angleSpin->setVisible(true);
+            amplitudeSpin->setVisible(true);
+            break;
+        case 6: // Checkerboard
+            periodSpin->setVisible(true);
+            angleSpin->setVisible(true);
+            break;
     }
 }

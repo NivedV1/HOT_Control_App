@@ -10,14 +10,12 @@ QMainWindow, QDialog, QWidget {
     font-size: 10pt;
 }
 
-/* Ensure black monitors stay black */
-QLabel[text="Camera Feed (Offline)"], QLabel[style*="background-color: black"] {
-    background-color: black;
-    color: white; 
-    border: 1px solid #555;
+/* Ensure monitors look consistent with theme */
+#cameraFeedLabel, #phaseMaskLabel {
+    background-color: #E0E0E0; /* Light gray for offline/empty state in light mode */
+    color: #333333; 
+    border: 1px solid #BCC1CB;
 }
-
-/* --- Panels and GroupBoxes (Compact Flat Design) --- */
 QGroupBox {
     background-color: transparent; 
     border: 1px solid #BCC1CB;
@@ -147,7 +145,15 @@ QStatusBar {
     background-color: #E2E6EA;
     color: #374151;
     border-top: 1px solid #BCC1CB;
-}/* ==========================================
+}
+
+/* --- Graphics View --- */
+QGraphicsView {
+    background-color: #FFFFFF;
+    border: 1px solid #BCC1CB;
+}
+
+/* ==========================================
    HOT Control - Professional Light Theme (Compact)
    ========================================== */
 
@@ -159,11 +165,21 @@ QMainWindow, QDialog, QWidget {
     font-size: 10pt;
 }
 
-/* Ensure black monitors stay black */
-QLabel[text="Camera Feed (Offline)"], QLabel[style*="background-color: black"] {
-    background-color: black;
-    color: white; 
-    border: 1px solid #555;
+/* Ensure monitors look consistent with theme */
+#cameraFeedLabel, #phaseMaskLabel {
+    background-color: #E0E0E0; /* Light gray for offline/empty state in light mode */
+    color: #333333; 
+    border: 1px solid #BCC1CB;
+}
+
+/* --- Grid Title Bar (Light Mode) --- */
+#gridTitleBar {
+    background-color: #e0e0e0;
+    border: 1px solid #bbb;
+}
+
+#gridTitleBar QLabel {
+    color: #333333;
 }
 
 

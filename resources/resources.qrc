@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>theme.qss</file>
-        <file>light_theme.qss</file> </qresource>
+        <file>light_theme.qss</file>
+        <file>favicon.ico</file>
+    </qresource>
 </RCC>

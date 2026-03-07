@@ -44,6 +44,7 @@ private slots:
     
     // SLM Slots
     void receiveHologram(const QImage &mask); 
+    void sendHologramToSLM(const QImage &mask); // NEW: Direct send to SLM from dialog
     void loadPhasePattern();    
     void loadCorrectionFile();  // Connected to the File Menu
     void sendToSLM();           
@@ -59,6 +60,7 @@ private:
     // Grid enlargement/minimize
     bool gridEnlarged = false;
     QWidget *gridTitleBar = nullptr;
+    QLabel *gridTitleLabel = nullptr;
     QPushButton *gridMaxMinBtn = nullptr;
     QWidget *controlsWidget = nullptr;
     QGridLayout *mainLayout = nullptr;

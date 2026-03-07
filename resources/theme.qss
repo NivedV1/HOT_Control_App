@@ -92,3 +92,26 @@ QMenu::item {
 QMenu::item:selected {
     background-color: #55585a;
 }
+
+/* --- Graphics View --- */
+QGraphicsView {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+}
+
+/* --- Camera and Phase Mask Labels --- */
+#cameraFeedLabel, #phaseMaskLabel {
+    background-color: black;
+    color: white;
+    border: 1px solid #444;
+}
+
+/* --- Grid Title Bar (Dark Mode) --- */
+#gridTitleBar {
+    background-color: #3c3f41;
+    border: 1px solid #555;
+}
+
+#gridTitleBar QLabel {
+    color: #e0e0e0;
+}

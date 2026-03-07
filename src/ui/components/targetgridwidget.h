@@ -37,7 +37,7 @@ class TargetGridWidget : public QGraphicsView {
     Q_OBJECT
 
 public:
-    explicit TargetGridWidget(int slmWidth = 1920, int slmHeight = 1080, QWidget *parent = nullptr);
+    explicit TargetGridWidget(int cameraWidth = 1920, int cameraHeight = 1080, QWidget *parent = nullptr);
     ~TargetGridWidget();
     
     // Add/remove points
@@ -49,10 +49,13 @@ public:
     QVector<QPair<int, QPointF>> getAllPoints() const;
     
     // Grid settings
-    void setGridResolution(int width, int height);
+    void setGridResolution(int cameraWidth, int cameraHeight);
     
     // Center the view
     void centerView();
+    
+    // Theme support
+    void setDarkMode(bool dark);
     
     // Keyboard support for moving selected point
     void moveSelectedPoint(int deltaX, int deltaY);  // Delta in pixels
@@ -80,11 +83,23 @@ private:
     void fitGridToView();
     
     QGraphicsScene *gridScene;
-    int slmWidth;      // SLM resolution width in pixels
-    int slmHeight;     // SLM resolution height in pixels
+    int cameraWidth;      // Camera resolution width in pixels
+    int cameraHeight;     // Camera resolution height in pixels
     QVector<GridPoint*> gridPoints;
     int nextPointId;
     GridPoint *selectedPoint;
+    
+    // Theme colors
+    bool isDarkMode;
+    QColor bgColor;
+    QColor minorGridColor;
+    QColor majorGridColor;
+    QColor axisColor;
+    QColor centerPointColor;
+    QColor borderColor;
+    QColor textColor;
+    
+    void updateThemeColors();
 };
 
 #endif // TARGETGRIDWIDGET_H
