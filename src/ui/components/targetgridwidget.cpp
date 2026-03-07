@@ -1,6 +1,7 @@
 #include "targetgridwidget.h"
 #include <QPainter>
 #include <QGraphicsSceneMouseEvent>
+#include <QGraphicsPixmapItem>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QWheelEvent>
@@ -27,14 +28,14 @@ GridPoint::GridPoint(QPointF pixelCoords, int pointId, QGraphicsItem *parent)
 }
 
 QRectF GridPoint::boundingRect() const {
-    return QRectF(-POINT_RADIUS - 2, -POINT_RADIUS - 2, 
+    return QRectF(-POINT_RADIUS - 2, -POINT_RADIUS - 2,
                    2 * (POINT_RADIUS + 2), 2 * (POINT_RADIUS + 2));
 }
 
 void GridPoint::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) {
     Q_UNUSED(option);
     Q_UNUSED(widget);
-    
+
     if (selected) {
         painter->setPen(QPen(QColor(0, 255, 0), 2.0));  // Green for selected
         painter->setBrush(QBrush(QColor(0, 200, 0, 100)));
@@ -42,9 +43,9 @@ void GridPoint::paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
         painter->setPen(QPen(QColor(100, 150, 255), 1.5));  // Blue for normal
         painter->setBrush(QBrush(QColor(100, 150, 255, 150)));
     }
-    
+
     painter->drawEllipse(QPointF(0, 0), POINT_RADIUS, POINT_RADIUS);
-    
+
     // Draw point ID text
     if (selected) {
         painter->setPen(QPen(QColor(0, 255, 0)));
@@ -79,7 +80,7 @@ void GridPoint::mouseReleaseEvent(QGraphicsSceneMouseEvent *event) {
 
 TargetGridWidget::TargetGridWidget(int cameraWidth, int cameraHeight, QWidget *parent)
     : QGraphicsView(parent), cameraWidth(cameraWidth), cameraHeight(cameraHeight),
-      nextPointId(1), selectedPoint(nullptr), isDarkMode(true) {
+      nextPointId(1), selectedPoint(nullptr), imageItem(nullptr), imageMode(false), isDarkMode(true) {
 
     // Initialize with dark mode colors
     updateThemeColors();
@@ -91,6 +92,13 @@ TargetGridWidget::TargetGridWidget(int cameraWidth, int cameraHeight, QWidget *p
     gridScene = new QGraphicsScene(this);
     gridScene->setSceneRect(-halfWidth, -halfHeight, cameraWidth, cameraHeight);
     setScene(gridScene);
+
+    // Add an image item spanning the same scene coordinates as the grid.
+    imageItem = new QGraphicsPixmapItem();
+    imageItem->setOffset(-halfWidth, -halfHeight);
+    imageItem->setVisible(false);
+    imageItem->setZValue(-1.0);
+    gridScene->addItem(imageItem);
 
     // Set rendering hints
     setRenderHint(QPainter::Antialiasing, true);
@@ -170,6 +178,19 @@ void TargetGridWidget::setGridResolution(int cameraWidth, int cameraHeight) {
     double halfWidth = cameraWidth / 2.0;
     double halfHeight = cameraHeight / 2.0;
     gridScene->setSceneRect(-halfWidth, -halfHeight, cameraWidth, cameraHeight);
+
+    // Keep the background image aligned to the camera-sized scene rect.
+    if (imageItem) {
+        imageItem->setOffset(-halfWidth, -halfHeight);
+    }
+
+    if (!backgroundImage.isNull()) {
+        QImage resized = backgroundImage.convertToFormat(QImage::Format_Grayscale8).scaled(
+            cameraWidth, cameraHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        backgroundImage = resized;
+        imageItem->setPixmap(QPixmap::fromImage(resized));
+    }
+
     fitGridToView();
 }
 
@@ -189,6 +210,46 @@ void TargetGridWidget::moveSelectedPoint(int deltaX, int deltaY) {
     selectedPoint->setPos(newPixel);
 
     emit pointMoved(selectedPoint->getPointId(), newPixel);
+}
+
+void TargetGridWidget::setBackgroundImage(const QImage &imgGrayCameraSized) {
+    if (!imageItem) {
+        return;
+    }
+
+    backgroundImage = imgGrayCameraSized.convertToFormat(QImage::Format_Grayscale8).scaled(
+        cameraWidth, cameraHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    imageItem->setPixmap(QPixmap::fromImage(backgroundImage));
+    imageItem->setVisible(imageMode && !backgroundImage.isNull());
+    scene()->update();
+}
+
+void TargetGridWidget::clearBackgroundImage() {
+    backgroundImage = QImage();
+    if (imageItem) {
+        imageItem->setPixmap(QPixmap());
+        imageItem->setVisible(false);
+    }
+    scene()->update();
+}
+
+void TargetGridWidget::setImageMode(bool enabled) {
+    imageMode = enabled;
+
+    if (imageMode) {
+        deselectAllPoints();
+    }
+
+    for (GridPoint *point : gridPoints) {
+        point->setVisible(!imageMode);
+    }
+
+    if (imageItem) {
+        imageItem->setVisible(imageMode && !backgroundImage.isNull());
+    }
+
+    scene()->update();
 }
 
 void TargetGridWidget::deselectAllPoints() {
@@ -227,10 +288,15 @@ void TargetGridWidget::centerView() {
 }
 
 void TargetGridWidget::mousePressEvent(QMouseEvent *event) {
+    if (imageMode) {
+        QGraphicsView::mousePressEvent(event);
+        return;
+    }
+
     if (event->button() == Qt::LeftButton) {
         QPointF scenePos = mapToScene(event->pos());
         QGraphicsItem *item = gridScene->itemAt(scenePos, QTransform());
-        
+
         // If no item clicked, create new point
         if (!item) {
             QPointF pixelCoords = screenToPixel(event->pos());
@@ -246,18 +312,18 @@ void TargetGridWidget::mousePressEvent(QMouseEvent *event) {
             return;
         }
     }
-    
+
     QGraphicsView::mousePressEvent(event);
 }
 
 void TargetGridWidget::keyPressEvent(QKeyEvent *event) {
-    if (!selectedPoint) {
+    if (imageMode || !selectedPoint) {
         QGraphicsView::keyPressEvent(event);
         return;
     }
-    
+
     int delta = 1;  // Movement step in pixels
-    
+
     switch (event->key()) {
         case Qt::Key_Up:
             moveSelectedPoint(0, -delta);
@@ -282,7 +348,7 @@ void TargetGridWidget::keyPressEvent(QKeyEvent *event) {
             QGraphicsView::keyPressEvent(event);
             return;
     }
-    
+
     event->accept();
 }
 
@@ -305,6 +371,11 @@ void TargetGridWidget::showEvent(QShowEvent *event) {
 }
 
 void TargetGridWidget::drawBackground(QPainter *painter, const QRectF &rect) {
+    if (imageMode) {
+        painter->fillRect(rect, Qt::black);
+        return;
+    }
+
     // Draw background
     painter->fillRect(rect, bgColor);
 

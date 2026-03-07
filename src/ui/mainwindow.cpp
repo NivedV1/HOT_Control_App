@@ -26,8 +26,13 @@
 #include <QStandardPaths>
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
 #include <QApplication>
 #include <QDebug>
+
+namespace {
+constexpr int kImageTabIndex = 2;
+}
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
@@ -239,7 +244,26 @@ void MainWindow::createControls(QGridLayout *layout) {
     
     targetModeTabs->addTab(manualTab, "Manual");
     targetModeTabs->addTab(new QWidget(), "Pattern");
-    targetModeTabs->addTab(new QWidget(), "Image");
+
+    QWidget *imageTab = new QWidget();
+    QVBoxLayout *imageLayout = new QVBoxLayout(imageTab);
+    QHBoxLayout *imageButtons = new QHBoxLayout();
+    loadTargetImageBtn = new QPushButton("Load Image");
+    clearTargetImageBtn = new QPushButton("Clear Image");
+    clearTargetImageBtn->setEnabled(false);
+    imageButtons->addWidget(loadTargetImageBtn);
+    imageButtons->addWidget(clearTargetImageBtn);
+    imageButtons->addStretch();
+
+    targetImageInfoLabel = new QLabel("No image loaded. Will resize to camera resolution and convert to grayscale.");
+    targetImageInfoLabel->setWordWrap(true);
+    targetImageInfoLabel->setStyleSheet("font-size: 11px;");
+
+    imageLayout->addLayout(imageButtons);
+    imageLayout->addWidget(targetImageInfoLabel);
+    imageLayout->addStretch();
+
+    targetModeTabs->addTab(imageTab, "Image");
     targetModeTabs->addTab(new QWidget(), "Camera");
 
     trapListContainer = new QWidget();
@@ -353,6 +377,8 @@ void MainWindow::setupConnections() {
 
     connect(targetModeTabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
     connect(saveMaskBtn, &QPushButton::clicked, this, &MainWindow::savePhaseMask);
+    connect(loadTargetImageBtn, &QPushButton::clicked, this, &MainWindow::loadTargetImage);
+    connect(clearTargetImageBtn, &QPushButton::clicked, this, &MainWindow::clearTargetImage);
     
     // Grid Widget connections
     connect(targetGridWidget, &TargetGridWidget::pointAdded, this, &MainWindow::onGridPointAdded);
@@ -453,6 +479,21 @@ void MainWindow::openSettingsDialog() {
         targetGridWidget->setGridResolution(camWidth, camHeight);
         targetGridWidget->centerView();
         targetGridWidget->clearAllPoints();
+
+        if (!loadedTargetImageOriginal.isNull()) {
+            loadedTargetImageGray = loadedTargetImageOriginal.convertToFormat(QImage::Format_Grayscale8).scaled(
+                camWidth, camHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+            if (targetImageInfoLabel) {
+                targetImageInfoLabel->setText(QString("Loaded image mapped to camera resolution: %1 x %2 (8-bit grayscale)")
+                    .arg(camWidth).arg(camHeight));
+            }
+
+            if (targetModeTabs && targetModeTabs->currentIndex() == kImageTabIndex) {
+                targetGridWidget->setBackgroundImage(loadedTargetImageGray);
+                targetGridWidget->setImageMode(true);
+            }
+        }
         
         if (backendChanged) {
             QMessageBox::information(this, "Restart Required", 
@@ -498,8 +539,64 @@ void MainWindow::updateCameraFeed(const QImage &img) {
         cameraFeedLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
+void MainWindow::loadTargetImage() {
+    QString fileName = QFileDialog::getOpenFileName(this, "Select Target Image", "", "Images (*.png *.bmp *.jpg *.jpeg *.tif *.tiff)");
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    QImage src(fileName);
+    if (src.isNull()) {
+        QMessageBox::warning(this, "Image Load Error", "Failed to load selected image.");
+        return;
+    }
+
+    loadedTargetImageOriginal = src;
+    loadedTargetImageGray = src.convertToFormat(QImage::Format_Grayscale8).scaled(
+        camWidth, camHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    clearTargetImageBtn->setEnabled(true);
+    targetImageInfoLabel->setText(QString("%1 -> %2 x %3 (8-bit grayscale)")
+        .arg(QFileInfo(fileName).fileName())
+        .arg(camWidth)
+        .arg(camHeight));
+
+    if (targetModeTabs->currentIndex() == kImageTabIndex) {
+        targetGridWidget->setBackgroundImage(loadedTargetImageGray);
+        targetGridWidget->setImageMode(true);
+    }
+
+    statusBar()->showMessage("Target image loaded and converted to camera-sized grayscale.", 4000);
+}
+
+void MainWindow::clearTargetImage() {
+    loadedTargetImageOriginal = QImage();
+    loadedTargetImageGray = QImage();
+
+    clearTargetImageBtn->setEnabled(false);
+    targetImageInfoLabel->setText("No image loaded. Will resize to camera resolution and convert to grayscale.");
+
+    targetGridWidget->clearBackgroundImage();
+    if (targetModeTabs->currentIndex() == kImageTabIndex) {
+        targetGridWidget->setImageMode(true);
+    }
+
+    statusBar()->showMessage("Target image cleared.", 3000);
+}
+
 void MainWindow::onTabChanged(int index) {
     trapListContainer->setVisible(index == 0 || index == 3);
+
+    if (index == kImageTabIndex) {
+        targetGridWidget->setImageMode(true);
+        if (!loadedTargetImageGray.isNull()) {
+            targetGridWidget->setBackgroundImage(loadedTargetImageGray);
+        } else {
+            targetGridWidget->clearBackgroundImage();
+        }
+    } else {
+        targetGridWidget->setImageMode(false);
+    }
 }
 
 void MainWindow::onRecordingTimeUpdated(const QString &timeString) {
@@ -907,3 +1004,10 @@ void MainWindow::toggleGridEnlarged() {
         gridMaxMinBtn->setToolTip("Enlarge grid view");
     }
 }
+
+
+
+
+
+
+

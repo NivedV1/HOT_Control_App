@@ -9,10 +9,10 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QPushButton>
-#include <QCheckBox> 
+#include <QCheckBox>
 #include <QImage>
 #include <QMap>
-#include <cstdint> 
+#include <cstdint>
 #include <QLibrary> // For dynamic DLL loading
 
 // Forward declarations
@@ -38,23 +38,27 @@ private slots:
     void onTabChanged(int index);
     void toggleTheme();
     void onRecordingTimeUpdated(const QString &timeString);
-    void onFPSUpdated(const QString &fpsString); 
+    void onFPSUpdated(const QString &fpsString);
     void savePhaseMask();
     void updateCameraFeed(const QImage &img);
-    
+
+    // Image tab slots
+    void loadTargetImage();
+    void clearTargetImage();
+
     // SLM Slots
-    void receiveHologram(const QImage &mask); 
+    void receiveHologram(const QImage &mask);
     void sendHologramToSLM(const QImage &mask); // NEW: Direct send to SLM from dialog
-    void loadPhasePattern();    
+    void loadPhasePattern();
     void loadCorrectionFile();  // Connected to the File Menu
-    void sendToSLM();           
-    void clearSLM();            
-    
+    void sendToSLM();
+    void clearSLM();
+
     // Grid Widget Slots
     void onGridPointAdded(int pointId, QPointF physicalCoords);
     void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
     void onGridPointRemoved(int pointId);
-    void onGridPointSelected(int pointId);            
+    void onGridPointSelected(int pointId);
 
 private:
     // Grid enlargement/minimize
@@ -64,7 +68,7 @@ private:
     QPushButton *gridMaxMinBtn = nullptr;
     QWidget *controlsWidget = nullptr;
     QGridLayout *mainLayout = nullptr;
-    
+
     // Control section wrappers for hiding/showing
     QWidget *toolsRow = nullptr;      // Row 2 with tools
     QWidget *controlsRow = nullptr;   // Row 3 with main controls
@@ -76,8 +80,8 @@ private:
     void setupConnections();
     void applyTheme(bool dark);
     void toggleGridEnlarged();
-    
-    // Helper function to manage the preview screen 
+
+    // Helper function to manage the preview screen
     void updatePhasePreview();
 
     // returns a full-resolution image that combines currentMask and correctionMask (modulo 256)
@@ -92,12 +96,19 @@ private:
     QLabel *phaseMaskLabel;
     QLabel *resolutionLabel;
     QLabel *fpsLabel;
-    QCheckBox *previewCorrectionCb; 
+    QCheckBox *previewCorrectionCb;
     QPushButton *saveMaskBtn;
     QPushButton *addTrapBtn;
     QPushButton *removeTrapBtn;
     QPushButton *clearTrapsBtn;
-    
+
+    // Image tab controls/state
+    QPushButton *loadTargetImageBtn;
+    QPushButton *clearTargetImageBtn;
+    QLabel *targetImageInfoLabel;
+    QImage loadedTargetImageOriginal;
+    QImage loadedTargetImageGray;
+
     QLabel *cameraFeedLabel;
     QComboBox *camSelect;
     QPushButton *camStartBtn;
@@ -113,12 +124,12 @@ private:
     int slmWidth = 1920;
     int slmHeight = 1080;
     double slmPixelSize = 8.0;
-    int cameraBackend = 0; 
+    int cameraBackend = 0;
     int camWidth = 1920;
     int camHeight = 1080;
-    double camPixelSize = 5.0; 
-    double laserWavelength = 1064.0; 
-    double fourierFocalLength = 100.0; 
+    double camPixelSize = 5.0;
+    double laserWavelength = 1064.0;
+    double fourierFocalLength = 100.0;
     bool isDarkMode = true;
 
     // SLM Pointers & State
@@ -126,11 +137,11 @@ private:
     QPushButton *sendSlmBtn;
     QPushButton *clearSlmBtn;
 
-    int slmWindowID = 0; 
+    int slmWindowID = 0;
     QImage currentMask;     // The target hologram
     QImage correctionMask;  // The physical flatness correction
     QLibrary slmLibrary;    // Dynamic DLL Loader
-    
+
     // Grid point data
     QMap<int, QPointF> gridPointData;  // Maps point ID to physical coordinates
     int selectedPointId = -1;

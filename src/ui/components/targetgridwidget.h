@@ -6,6 +6,9 @@
 #include <QGraphicsItem>
 #include <QVector>
 #include <QPointF>
+#include <QImage>
+
+class QGraphicsPixmapItem;
 
 class GridPoint : public QGraphicsItem {
 public:
@@ -59,6 +62,12 @@ public:
     
     // Keyboard support for moving selected point
     void moveSelectedPoint(int deltaX, int deltaY);  // Delta in pixels
+
+    // Image mode support
+    void setBackgroundImage(const QImage &imgGrayCameraSized);
+    void clearBackgroundImage();
+    void setImageMode(bool enabled);
+    bool isImageMode() const { return imageMode; }
     
 signals:
     void pointAdded(int pointId, QPointF pixelCoords);
@@ -88,6 +97,9 @@ private:
     QVector<GridPoint*> gridPoints;
     int nextPointId;
     GridPoint *selectedPoint;
+    QGraphicsPixmapItem *imageItem;
+    QImage backgroundImage;
+    bool imageMode;
     
     // Theme colors
     bool isDarkMode;
