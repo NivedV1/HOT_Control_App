@@ -1,7 +1,9 @@
 #include "mainwindow.h"
 #include "settingsdialog.h"
 #include "hologramdialog.h"
+#include "sourceintensitydialog.h"
 #include "components/targetgridwidget.h"
+#include "components/arrowspinbox.h"
 #include "../camera/cameramanager.h"
 
 #include <QVBoxLayout>
@@ -112,6 +114,9 @@ void MainWindow::createMenus() {
     // --- Correction Map loaded via File Menu ---
     QAction *corrAction = fileMenu->addAction("Load SLM Correction Mask...");
     connect(corrAction, &QAction::triggered, this, &MainWindow::loadCorrectionFile);
+
+    QAction *sourceAction = fileMenu->addAction("Source Intensity...");
+    connect(sourceAction, &QAction::triggered, this, &MainWindow::openSourceIntensityDialog);
     
     fileMenu->addSeparator();
     fileMenu->addAction("Exit", this, &QWidget::close);
@@ -305,8 +310,8 @@ void MainWindow::createControls(QGridLayout *layout) {
     QComboBox *algoCombo = new QComboBox();
     algoCombo->addItems({"Gerchberg-Saxton", "Weighted GS"});
     algoForm->addRow("Algorithm:", algoCombo);
-    algoForm->addRow("Iterations:", new QSpinBox());
-    algoForm->addRow("Relaxation:", new QDoubleSpinBox());
+    algoForm->addRow("Iterations:", new ArrowSpinBox());
+    algoForm->addRow("Relaxation:", new ArrowDoubleSpinBox());
     algoGroup->setLayout(algoForm);
     midCol->addWidget(algoGroup);
     midCol->addStretch();
@@ -441,27 +446,30 @@ void MainWindow::setupConnections() {
 // ==========================================
 
 void MainWindow::openSettingsDialog() {
-    SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend, 
-                          camWidth, camHeight, camPixelSize, 
+    SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
+                          camWidth, camHeight, camPixelSize,
                           laserWavelength, fourierFocalLength, this);
-    
+
     if (dialog.exec() == QDialog::Accepted) {
+        const int prevSlmWidth = slmWidth;
+        const int prevSlmHeight = slmHeight;
+
         slmWidth = dialog.getWidth();
         slmHeight = dialog.getHeight();
         slmPixelSize = dialog.getPixelSize();
-        
+
         bool backendChanged = (cameraBackend != dialog.getCameraBackend());
-        cameraBackend = dialog.getCameraBackend(); 
-        
+        cameraBackend = dialog.getCameraBackend();
+
         camWidth = dialog.getCamWidth();
         camHeight = dialog.getCamHeight();
         camPixelSize = dialog.getCamPixelSize();
         laserWavelength = dialog.getWavelength();
         fourierFocalLength = dialog.getFocalLength();
-        
+
         QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
         QSettings settings(configPath, QSettings::IniFormat);
-        
+
         settings.setValue("Hardware/SLM_Width", slmWidth);
         settings.setValue("Hardware/SLM_Height", slmHeight);
         settings.setValue("Hardware/SLM_PixelSize", slmPixelSize);
@@ -472,9 +480,9 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Optical/Wavelength", laserWavelength);
         settings.setValue("Optical/FocalLength", fourierFocalLength);
         settings.sync();
-        
+
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
-        
+
         // Update grid resolution dynamically
         targetGridWidget->setGridResolution(camWidth, camHeight);
         targetGridWidget->centerView();
@@ -494,9 +502,19 @@ void MainWindow::openSettingsDialog() {
                 targetGridWidget->setImageMode(true);
             }
         }
-        
+
+        const bool slmResolutionChanged = (slmWidth != prevSlmWidth) || (slmHeight != prevSlmHeight);
+        const int expectedSourceSize = slmWidth * slmHeight;
+        if (!sourceIntensityMap.isEmpty() && (slmResolutionChanged || sourceIntensityMap.size() != expectedSourceSize)) {
+            sourceIntensityMap.clear();
+            sourceIntensityPreview = QImage();
+            sourcePresetName.clear();
+            sourceBeamWaistPx = 0.0;
+            statusBar()->showMessage("SLM resolution changed. Source intensity invalidated; please re-apply Source Intensity.", 6000);
+        }
+
         if (backendChanged) {
-            QMessageBox::information(this, "Restart Required", 
+            QMessageBox::information(this, "Restart Required",
                 "You have changed the Camera Engine. Please restart the application for this to take effect.");
         } else {
             statusBar()->showMessage("Settings saved to: " + configPath, 5000);
@@ -509,6 +527,41 @@ void MainWindow::openHologramGenerator() {
     connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
     connect(&dialog, &HologramDialog::sendToSLMRequested, this, &MainWindow::sendHologramToSLM);
     dialog.exec();
+}
+
+void MainWindow::openSourceIntensityDialog() {
+    double defaultWaist = sourceBeamWaistPx;
+    if (defaultWaist <= 0.0) {
+        defaultWaist = static_cast<double>(qMin(slmWidth, slmHeight)) / 6.0;
+    }
+
+    SourceIntensityDialog dialog(slmWidth, slmHeight, sourceIntensityMap, defaultWaist, this);
+    connect(&dialog, &SourceIntensityDialog::sourceIntensityApplied, this, &MainWindow::onSourceIntensityApplied);
+    dialog.exec();
+}
+
+void MainWindow::onSourceIntensityApplied(const QVector<float> &intensityMap,
+                                          int width,
+                                          int height,
+                                          const QString &presetName,
+                                          double beamWaistPx,
+                                          const QImage &previewImage) {
+    const int expectedSize = slmWidth * slmHeight;
+    if (width != slmWidth || height != slmHeight || intensityMap.size() != expectedSize) {
+        QMessageBox::warning(this, "Source Intensity", "Incoming source intensity size does not match current SLM resolution.");
+        return;
+    }
+
+    sourceIntensityMap = intensityMap;
+    sourceIntensityPreview = previewImage;
+    sourcePresetName = presetName;
+    sourceBeamWaistPx = beamWaistPx;
+
+    statusBar()->showMessage(QString("Source intensity applied: %1, waist %2 px, array size %3")
+                                 .arg(sourcePresetName)
+                                 .arg(sourceBeamWaistPx, 0, 'f', 1)
+                                 .arg(sourceIntensityMap.size()),
+                             5000);
 }
 
 void MainWindow::savePhaseMask() {
@@ -686,13 +739,33 @@ void MainWindow::toggleTheme() {
 }
 
 void MainWindow::applyTheme(bool dark) {
-    QString themeFile = dark ? ":/theme.qss" : ":/light_theme.qss";
-    QFile file(themeFile);
-    if (file.open(QFile::ReadOnly | QFile::Text)) {
-        qApp->setStyleSheet(QTextStream(&file).readAll());
-        file.close();
+    const QString themeName = dark ? "theme.qss" : "light_theme.qss";
+    const QStringList diskCandidates = {
+        QDir(QCoreApplication::applicationDirPath()).filePath("resources/" + themeName),
+        QDir(QCoreApplication::applicationDirPath()).filePath("../resources/" + themeName),
+        QDir(QCoreApplication::applicationDirPath()).filePath("../../resources/" + themeName),
+        QDir::current().filePath("resources/" + themeName)
+    };
+    QString styleSheet;
+    for (const QString &candidate : diskCandidates) {
+        QFile diskFile(candidate);
+        if (diskFile.exists() && diskFile.open(QFile::ReadOnly | QFile::Text)) {
+            styleSheet = QTextStream(&diskFile).readAll();
+            diskFile.close();
+            break;
+        }
     }
-    
+    if (styleSheet.isEmpty()) {
+        const QString qrcTheme = dark ? ":/theme.qss" : ":/light_theme.qss";
+        QFile qrcFile(qrcTheme);
+        if (qrcFile.open(QFile::ReadOnly | QFile::Text)) {
+            styleSheet = QTextStream(&qrcFile).readAll();
+            qrcFile.close();
+        }
+    }
+    if (!styleSheet.isEmpty()) {
+        qApp->setStyleSheet(styleSheet);
+    }
     // Update grid title bar styling
     if (gridTitleBar) {
         if (dark) {
@@ -707,13 +780,11 @@ void MainWindow::applyTheme(bool dark) {
             }
         }
     }
-    
     // Update grid widget theme
     if (targetGridWidget) {
         targetGridWidget->setDarkMode(dark);
     }
 }
-
 // ==========================================
 // DYNAMIC SLM LOGIC & PREVIEW
 // ==========================================
@@ -1004,6 +1075,16 @@ void MainWindow::toggleGridEnlarged() {
         gridMaxMinBtn->setToolTip("Enlarge grid view");
     }
 }
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -1,4 +1,5 @@
 #include "hologramdialog.h"
+#include "components/arrowspinbox.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -31,32 +32,32 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     patternTypeCombo = new QComboBox();
     patternTypeCombo->addItems({"Blazed Grating (Prism)", "Binary Grating", "Fresnel Lens", "Axicon", "Vortex Beam", "Sinusoidal Grating", "Checkerboard"});
     
-    periodSpin = new QDoubleSpinBox();
+    periodSpin = new ArrowDoubleSpinBox();
     periodSpin->setRange(2.0, 1000.0);
     periodSpin->setValue(50.0);
     periodSpin->setSuffix(" pixels");
     
-    angleSpin = new QDoubleSpinBox();
+    angleSpin = new ArrowDoubleSpinBox();
     angleSpin->setRange(0.0, 360.0);
     angleSpin->setValue(0.0);
     angleSpin->setSuffix(" °");
     
     // Additional parameters for new patterns
-    focalLengthSpin = new QDoubleSpinBox();
+    focalLengthSpin = new ArrowDoubleSpinBox();
     focalLengthSpin->setRange(10.0, 10000.0);
     focalLengthSpin->setValue(500.0);
     focalLengthSpin->setSuffix(" pixels");
     
-    coneAngleSpin = new QDoubleSpinBox();
+    coneAngleSpin = new ArrowDoubleSpinBox();
     coneAngleSpin->setRange(0.1, 45.0);
     coneAngleSpin->setValue(5.0);
     coneAngleSpin->setSuffix(" °");
     
-    topologicalChargeSpin = new QSpinBox();
+    topologicalChargeSpin = new ArrowSpinBox();
     topologicalChargeSpin->setRange(1, 10);
     topologicalChargeSpin->setValue(1);
     
-    amplitudeSpin = new QDoubleSpinBox();
+    amplitudeSpin = new ArrowDoubleSpinBox();
     amplitudeSpin->setRange(0.0, 1.0);
     amplitudeSpin->setValue(0.5);
     amplitudeSpin->setSingleStep(0.1);

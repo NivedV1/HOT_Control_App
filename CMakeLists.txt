@@ -7,23 +7,24 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Enable Qt's automated build tools
-set(CMAKE_AUTOMOC ON) 
-set(CMAKE_AUTORCC ON) 
-set(CMAKE_AUTOUIC ON) 
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
 
 # Find Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets) 
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets)
 
 # Find OpenCV
 set(OpenCV_DIR "C:/opencv/build")
 find_package(OpenCV REQUIRED)
 
-# Define all the source files 
+# Define all the source files
 set(SOURCES
     src/main.cpp
     src/ui/mainwindow.cpp
-    src/ui/settingsdialog.cpp 
-    src/camera/cameramanager.cpp 
+    src/ui/settingsdialog.cpp
+    src/ui/sourceintensitydialog.cpp
+    src/camera/cameramanager.cpp
     src/core/trap_manager.cpp
     src/ui/hologramdialog.cpp
     src/core/algorithms/gs_algorithm.cpp
@@ -35,8 +36,9 @@ set(SOURCES
 # Define header files
 set(HEADERS
     src/ui/mainwindow.h
-    src/ui/settingsdialog.h 
-    src/camera/cameramanager.h 
+    src/ui/settingsdialog.h
+    src/ui/sourceintensitydialog.h
+    src/camera/cameramanager.h
     src/ui/hologramdialog.h
     src/ui/components/traptable.h
     src/ui/components/patternview.h
@@ -59,23 +61,23 @@ set(RESOURCES
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
 
 # Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE 
+target_include_directories(${PROJECT_NAME} PRIVATE
     src/ui
     src/ui/components
     src/core
     src/core/algorithms
     src/hardware
-    src/camera 
+    src/camera
 )
 
 # Link the Qt libraries and OpenCV to your executable
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    Qt6::Core 
-    Qt6::Gui 
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Qt6::Core
+    Qt6::Gui
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
-    ${OpenCV_LIBS} 
+    ${OpenCV_LIBS}
 )
 
 if (WIN32)

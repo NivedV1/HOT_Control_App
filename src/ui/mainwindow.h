@@ -12,6 +12,8 @@
 #include <QCheckBox>
 #include <QImage>
 #include <QMap>
+#include <QVector>
+#include <QString>
 #include <cstdint>
 #include <QLibrary> // For dynamic DLL loading
 
@@ -35,6 +37,8 @@ public:
 private slots:
     void openSettingsDialog();
     void openHologramGenerator();
+    void openSourceIntensityDialog();
+    void onSourceIntensityApplied(const QVector<float> &intensityMap, int width, int height, const QString &presetName, double beamWaistPx, const QImage &previewImage);
     void onTabChanged(int index);
     void toggleTheme();
     void onRecordingTimeUpdated(const QString &timeString);
@@ -108,6 +112,12 @@ private:
     QLabel *targetImageInfoLabel;
     QImage loadedTargetImageOriginal;
     QImage loadedTargetImageGray;
+
+    // Source intensity state (SLM-sized array)
+    QVector<float> sourceIntensityMap;
+    QImage sourceIntensityPreview;
+    QString sourcePresetName;
+    double sourceBeamWaistPx = 0.0;
 
     QLabel *cameraFeedLabel;
     QComboBox *camSelect;

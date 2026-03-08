@@ -3,5 +3,17 @@
         <file>theme.qss</file>
         <file>light_theme.qss</file>
         <file>favicon.ico</file>
+        <file>spin_up_light.png</file>
+        <file>spin_down_light.png</file>
+        <file>spin_up_dark.png</file>
+        <file>spin_down_dark.png</file>
+        <file>spin_up_light.xpm</file>
+        <file>spin_down_light.xpm</file>
+        <file>spin_up_dark.xpm</file>
+        <file>spin_down_dark.xpm</file>
+        <file>spin_up_light.svg</file>
+        <file>spin_down_light.svg</file>
+        <file>spin_up_dark.svg</file>
+        <file>spin_down_dark.svg</file>
     </qresource>
 </RCC>

@@ -1,0 +1,11 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "cmake": true,
+        "Ctrl+Z": true,
+        "/^exit\\(\\)$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "&\"C:\\Users\\NIVED\\Desktop\\HOT_Control_App\\build\\Release\\HOT_Control_App.exe\"": true
+    }
+}

@@ -1,4 +1,5 @@
 #include "settingsdialog.h"
+#include "components/arrowspinbox.h"
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -18,9 +19,9 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     QGroupBox *slmGroup = new QGroupBox("SLM Parameters");
     QFormLayout *slmForm = new QFormLayout();
     
-    widthSpin = new QSpinBox(this); widthSpin->setRange(100, 8000); widthSpin->setValue(slmW);
-    heightSpin = new QSpinBox(this); heightSpin->setRange(100, 8000); heightSpin->setValue(slmH);
-    pixelSpin = new QDoubleSpinBox(this); pixelSpin->setRange(0.1, 100.0); pixelSpin->setDecimals(2);
+    widthSpin = new ArrowSpinBox(this); widthSpin->setRange(100, 8000); widthSpin->setValue(slmW);
+    heightSpin = new ArrowSpinBox(this); heightSpin->setRange(100, 8000); heightSpin->setValue(slmH);
+    pixelSpin = new ArrowDoubleSpinBox(this); pixelSpin->setRange(0.1, 100.0); pixelSpin->setDecimals(2);
     pixelSpin->setSuffix(" µm"); pixelSpin->setValue(slmPix);
     
     slmForm->addRow("SLM Width (pixels):", widthSpin);
@@ -36,9 +37,9 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     cameraBackendCombo->addItems({"Qt Native (WMF)", "OpenCV (DirectShow)"});
     cameraBackendCombo->setCurrentIndex(backend);
     
-    camWidthSpin = new QSpinBox(this); camWidthSpin->setRange(100, 8000); camWidthSpin->setValue(camW);
-    camHeightSpin = new QSpinBox(this); camHeightSpin->setRange(100, 8000); camHeightSpin->setValue(camH);
-    camPixelSpin = new QDoubleSpinBox(this); camPixelSpin->setRange(0.1, 100.0); camPixelSpin->setDecimals(2);
+    camWidthSpin = new ArrowSpinBox(this); camWidthSpin->setRange(100, 8000); camWidthSpin->setValue(camW);
+    camHeightSpin = new ArrowSpinBox(this); camHeightSpin->setRange(100, 8000); camHeightSpin->setValue(camH);
+    camPixelSpin = new ArrowDoubleSpinBox(this); camPixelSpin->setRange(0.1, 100.0); camPixelSpin->setDecimals(2);
     camPixelSpin->setSuffix(" µm"); camPixelSpin->setValue(camPix);
     
     camForm->addRow("Camera Engine:", cameraBackendCombo);
@@ -51,10 +52,10 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     QGroupBox *opticsGroup = new QGroupBox("Optical Setup");
     QFormLayout *opticsForm = new QFormLayout();
     
-    waveSpin = new QDoubleSpinBox(this); waveSpin->setRange(100.0, 2000.0); waveSpin->setDecimals(1);
+    waveSpin = new ArrowDoubleSpinBox(this); waveSpin->setRange(100.0, 2000.0); waveSpin->setDecimals(1);
     waveSpin->setSuffix(" nm"); waveSpin->setValue(wave);
     
-    focalSpin = new QDoubleSpinBox(this); focalSpin->setRange(1.0, 1000.0); focalSpin->setDecimals(1);
+    focalSpin = new ArrowDoubleSpinBox(this); focalSpin->setRange(1.0, 1000.0); focalSpin->setDecimals(1);
     focalSpin->setSuffix(" mm"); focalSpin->setValue(focal);
     
     opticsForm->addRow("Laser Wavelength:", waveSpin);
