@@ -505,3 +505,26 @@ QSpinBox::down-button, QDoubleSpinBox::down-button {
     background-image: none;
 }
 
+
+/* Final spinner side-by-side order: UP on left, DOWN on right */
+QSpinBox, QDoubleSpinBox {
+    padding-right: 44px;
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 22px;
+    height: 100%;
+    right: 22px;
+    top: 0px;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 22px;
+    height: 100%;
+    right: 0px;
+    top: 0px;
+}
