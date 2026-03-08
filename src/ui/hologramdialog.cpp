@@ -178,6 +178,16 @@ void HologramDialog::generatePattern() {
                 double mod = std::fmod(proj, period);
                 if (mod < 0) mod += period;
                 row[x] = (mod < (period/2 )) ? 0 : 128; // 128 = Pi phase shift
+            } else if (type == 5) {
+                // 6. SINUSOIDAL GRATING
+                // Phase modulation: phi = pi + A*pi*sin(2*pi*proj/period)
+                // Then wrap [0,2pi) and map to [0,255].
+                const double amplitude = amplitudeSpin->value();
+                const double s = std::sin((2.0 * M_PI * proj) / period);
+                double phi = M_PI + (amplitude * M_PI * s);
+                phi = std::fmod(phi, 2.0 * M_PI);
+                if (phi < 0.0) phi += 2.0 * M_PI;
+                row[x] = static_cast<uchar>((phi / (2.0 * M_PI)) * 255.0);
             } else if (type == 6) {
                 // 7. CHECKERBOARD
                 // Phase alternates between 0 and pi (0 and 128) based on rotated grid
@@ -270,3 +280,4 @@ void HologramDialog::updateParameterVisibility() {
             break;
     }
 }
+
