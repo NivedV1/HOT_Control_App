@@ -235,7 +235,6 @@ void HologramDialog::sendToMain() {
 void HologramDialog::sendToSLM() {
     if (!currentPhaseImage.isNull()) {
         emit sendToSLMRequested(currentPhaseImage); // Send the image data to SLM
-        accept(); // Close the dialog
     }
 }
 
