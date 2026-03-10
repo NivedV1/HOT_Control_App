@@ -144,6 +144,7 @@ void TargetGridWidget::removePoint(int pointId) {
         if (gridPoints[i]->getPointId() == pointId) {
             if (selectedPoint == gridPoints[i]) {
                 selectedPoint = nullptr;
+                pointDragActive = false;
             }
             gridScene->removeItem(gridPoints[i]);
             delete gridPoints[i];
@@ -161,6 +162,7 @@ void TargetGridWidget::clearAllPoints() {
     }
     gridPoints.clear();
     selectedPoint = nullptr;
+    pointDragActive = false;
     nextPointId = 1;
 }
 
@@ -257,6 +259,7 @@ void TargetGridWidget::deselectAllPoints() {
         point->setSelected(false);
     }
     selectedPoint = nullptr;
+    pointDragActive = false;
     emit pointDeselected();
 }
 
@@ -299,57 +302,134 @@ void TargetGridWidget::mousePressEvent(QMouseEvent *event) {
 
         // If no item clicked, create new point
         if (!item) {
+            pointDragActive = false;
             QPointF pixelCoords = screenToPixel(event->pos());
             addPoint(pixelCoords);
             event->accept();
             return;
-        } else if (GridPoint *point = dynamic_cast<GridPoint*>(item)) {
+        }
+
+        if (GridPoint *point = dynamic_cast<GridPoint*>(item)) {
             deselectAllPoints();
             point->setSelected(true);
             selectedPoint = point;
             emit pointSelected(point->getPointId());
+
+            pointDragActive = true;
+            pointDragOffset = selectedPoint->pos() - scenePos;
             event->accept();
             return;
         }
     }
 
+    pointDragActive = false;
     QGraphicsView::mousePressEvent(event);
 }
 
+void TargetGridWidget::mouseMoveEvent(QMouseEvent *event) {
+    if (imageMode || !pointDragActive || !selectedPoint || !(event->buttons() & Qt::LeftButton)) {
+        QGraphicsView::mouseMoveEvent(event);
+        return;
+    }
+
+    QPointF newPixel = screenToPixel(event->pos()) + pointDragOffset;
+
+    // Clamp to camera grid bounds: -width/2 to +width/2, -height/2 to +height/2
+    double halfWidth = cameraWidth / 2.0;
+    double halfHeight = cameraHeight / 2.0;
+    newPixel.setX(qBound(-halfWidth, newPixel.x(), halfWidth));
+    newPixel.setY(qBound(-halfHeight, newPixel.y(), halfHeight));
+
+    if (selectedPoint->getPixelCoordinates() != newPixel) {
+        selectedPoint->setPixelCoordinates(newPixel);
+        selectedPoint->setPos(newPixel);
+        emit pointMoved(selectedPoint->getPointId(), newPixel);
+    }
+
+    event->accept();
+}
+
+void TargetGridWidget::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        pointDragActive = false;
+        event->accept();
+        return;
+    }
+
+    QGraphicsView::mouseReleaseEvent(event);
+}
+
+bool TargetGridWidget::removeLastCreatedPoint() {
+    int lastPointId = -1;
+    for (const GridPoint *point : gridPoints) {
+        if (point->getPointId() > lastPointId) {
+            lastPointId = point->getPointId();
+        }
+    }
+
+    if (lastPointId < 0) {
+        return false;
+    }
+
+    removePoint(lastPointId);
+    return true;
+}
+
 void TargetGridWidget::keyPressEvent(QKeyEvent *event) {
-    if (imageMode || !selectedPoint) {
+    if (imageMode) {
         QGraphicsView::keyPressEvent(event);
         return;
     }
 
-    int delta = 1;  // Movement step in pixels
+    const int delta = (event->modifiers() & Qt::ShiftModifier) ? 5 : 1;
 
     switch (event->key()) {
         case Qt::Key_Up:
-            moveSelectedPoint(0, -delta);
+            if (selectedPoint) {
+                moveSelectedPoint(0, -delta);
+                event->accept();
+                return;
+            }
             break;
         case Qt::Key_Down:
-            moveSelectedPoint(0, delta);
+            if (selectedPoint) {
+                moveSelectedPoint(0, delta);
+                event->accept();
+                return;
+            }
             break;
         case Qt::Key_Left:
-            moveSelectedPoint(-delta, 0);
+            if (selectedPoint) {
+                moveSelectedPoint(-delta, 0);
+                event->accept();
+                return;
+            }
             break;
         case Qt::Key_Right:
-            moveSelectedPoint(delta, 0);
+            if (selectedPoint) {
+                moveSelectedPoint(delta, 0);
+                event->accept();
+                return;
+            }
             break;
         case Qt::Key_Delete:
-        case Qt::Key_Backspace:
             if (selectedPoint) {
                 removePoint(selectedPoint->getPointId());
-                selectedPoint = nullptr;
+                event->accept();
+                return;
+            }
+            break;
+        case Qt::Key_Backspace:
+            if (removeLastCreatedPoint()) {
+                event->accept();
+                return;
             }
             break;
         default:
-            QGraphicsView::keyPressEvent(event);
-            return;
+            break;
     }
 
-    event->accept();
+    QGraphicsView::keyPressEvent(event);
 }
 
 void TargetGridWidget::wheelEvent(QWheelEvent *event) {

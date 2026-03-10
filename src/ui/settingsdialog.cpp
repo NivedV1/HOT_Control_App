@@ -4,44 +4,50 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QDialogButtonBox>
+#include <QLabel>
 
-SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend, 
-                               int camW, int camH, double camPix, 
-                               double wave, double focal, QWidget *parent)
+SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
+                               int camW, int camH, double camPix,
+                               double wave, double focal, int slmOutputMode, QWidget *parent)
     : QDialog(parent) {
-    
+
     setWindowTitle("Hardware Settings");
     setMinimumWidth(400);
-    
+
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
-    
+
     // --- 1. SLM SETTINGS ---
     QGroupBox *slmGroup = new QGroupBox("SLM Parameters");
     QFormLayout *slmForm = new QFormLayout();
-    
+
     widthSpin = new ArrowSpinBox(this); widthSpin->setRange(100, 8000); widthSpin->setValue(slmW);
     heightSpin = new ArrowSpinBox(this); heightSpin->setRange(100, 8000); heightSpin->setValue(slmH);
     pixelSpin = new ArrowDoubleSpinBox(this); pixelSpin->setRange(0.1, 100.0); pixelSpin->setDecimals(2);
-    pixelSpin->setSuffix(" µm"); pixelSpin->setValue(slmPix);
-    
+    pixelSpin->setSuffix(" um"); pixelSpin->setValue(slmPix);
+
+    slmOutputModeCombo = new QComboBox(this);
+    slmOutputModeCombo->addItems({"DLL", "Direct Screen"});
+    slmOutputModeCombo->setCurrentIndex((slmOutputMode == 1) ? 1 : 0);
+
     slmForm->addRow("SLM Width (pixels):", widthSpin);
     slmForm->addRow("SLM Height (pixels):", heightSpin);
     slmForm->addRow("SLM Pixel Size:", pixelSpin);
+    slmForm->addRow("SLM Output Mode:", slmOutputModeCombo);
     slmGroup->setLayout(slmForm);
-    
+
     // --- 2. CAMERA SETTINGS ---
     QGroupBox *camGroup = new QGroupBox("Camera Parameters");
     QFormLayout *camForm = new QFormLayout();
-    
+
     cameraBackendCombo = new QComboBox(this);
     cameraBackendCombo->addItems({"Qt Native (WMF)", "OpenCV (DirectShow)"});
     cameraBackendCombo->setCurrentIndex(backend);
-    
+
     camWidthSpin = new ArrowSpinBox(this); camWidthSpin->setRange(100, 8000); camWidthSpin->setValue(camW);
     camHeightSpin = new ArrowSpinBox(this); camHeightSpin->setRange(100, 8000); camHeightSpin->setValue(camH);
     camPixelSpin = new ArrowDoubleSpinBox(this); camPixelSpin->setRange(0.1, 100.0); camPixelSpin->setDecimals(2);
-    camPixelSpin->setSuffix(" µm"); camPixelSpin->setValue(camPix);
-    
+    camPixelSpin->setSuffix(" um"); camPixelSpin->setValue(camPix);
+
     camForm->addRow("Camera Engine:", cameraBackendCombo);
     camForm->addRow("Camera Width (px):", camWidthSpin);
     camForm->addRow("Camera Height (px):", camHeightSpin);
@@ -51,25 +57,29 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     // --- 3. OPTICAL SETUP ---
     QGroupBox *opticsGroup = new QGroupBox("Optical Setup");
     QFormLayout *opticsForm = new QFormLayout();
-    
+
     waveSpin = new ArrowDoubleSpinBox(this); waveSpin->setRange(100.0, 2000.0); waveSpin->setDecimals(1);
     waveSpin->setSuffix(" nm"); waveSpin->setValue(wave);
-    
+
     focalSpin = new ArrowDoubleSpinBox(this); focalSpin->setRange(1.0, 1000.0); focalSpin->setDecimals(1);
     focalSpin->setSuffix(" mm"); focalSpin->setValue(focal);
-    
+
     opticsForm->addRow("Laser Wavelength:", waveSpin);
     opticsForm->addRow("Fourier Lens Focal Length:", focalSpin);
     opticsGroup->setLayout(opticsForm);
+
+    QLabel *monitorHint = new QLabel("Monitor target is selected from Tools > Select Monitor.");
+    monitorHint->setWordWrap(true);
 
     // Assemble the dialog
     mainLayout->addWidget(slmGroup);
     mainLayout->addWidget(camGroup);
     mainLayout->addWidget(opticsGroup);
-    
+    mainLayout->addWidget(monitorHint);
+
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, this);
     mainLayout->addWidget(buttonBox);
-    
+
     connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 }
@@ -88,3 +98,6 @@ double SettingsDialog::getCamPixelSize() const { return camPixelSpin->value(); }
 // Optical Getters
 double SettingsDialog::getWavelength() const { return waveSpin->value(); }
 double SettingsDialog::getFocalLength() const { return focalSpin->value(); }
+
+// SLM Output Getter
+int SettingsDialog::getSlmOutputMode() const { return slmOutputModeCombo->currentIndex(); }

@@ -31,6 +31,8 @@ set(SOURCES
     src/hardware/slm_controller.cpp
     src/hardware/camera_stream.cpp
     src/ui/components/targetgridwidget.cpp
+    src/core/patterngenerator.cpp
+    src/ui/components/patternpresetswidget.cpp
 )
 
 # Define header files
@@ -43,6 +45,8 @@ set(HEADERS
     src/ui/components/traptable.h
     src/ui/components/patternview.h
     src/ui/components/targetgridwidget.h
+    src/ui/components/patternpresetswidget.h
+    src/core/patterngenerator.h
     src/core/trap_manager.h
     src/core/algorithms/phase_algorithm.h
     src/core/algorithms/gs_algorithm.h
@@ -94,8 +98,9 @@ if (WIN32)
 # 2. Automatically copy the Hamamatsu DLL and OpenCV DLL next to the executable
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/Image_Control.dll"
         "C:/opencv/build/x64/vc16/bin/opencv_world4120.dll"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
     )
 endif()
+
+

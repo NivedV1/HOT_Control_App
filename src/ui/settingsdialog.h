@@ -9,37 +9,41 @@
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
-    SettingsDialog(int slmW, int slmH, double slmPix, int backend, 
-                   int camW, int camH, double camPix, 
-                   double wave, double focal, QWidget *parent = nullptr);
+    SettingsDialog(int slmW, int slmH, double slmPix, int backend,
+                   int camW, int camH, double camPix,
+                   double wave, double focal, int slmOutputMode, QWidget *parent = nullptr);
 
     // SLM Getters
     int getWidth() const;
     int getHeight() const;
     double getPixelSize() const;
-    
+
     // Camera Getters
     int getCameraBackend() const;
     int getCamWidth() const;
     int getCamHeight() const;
     double getCamPixelSize() const;
-    
+
     // Optical Getters
     double getWavelength() const;
     double getFocalLength() const;
+
+    // SLM Output Getters
+    int getSlmOutputMode() const;
 
 private:
     // SLM
     QSpinBox *widthSpin;
     QSpinBox *heightSpin;
     QDoubleSpinBox *pixelSpin;
-    
+    QComboBox *slmOutputModeCombo;
+
     // Camera
     QComboBox *cameraBackendCombo;
     QSpinBox *camWidthSpin;
     QSpinBox *camHeightSpin;
     QDoubleSpinBox *camPixelSpin;
-    
+
     // Optics
     QDoubleSpinBox *waveSpin;
     QDoubleSpinBox *focalSpin;

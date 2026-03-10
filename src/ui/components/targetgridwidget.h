@@ -78,6 +78,8 @@ signals:
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void drawBackground(QPainter *painter, const QRectF &rect) override;
@@ -87,6 +89,7 @@ protected:
 private:
     void updateGridDisplay();
     void deselectAllPoints();
+    bool removeLastCreatedPoint();
     QPointF screenToPixel(QPointF screenPos) const;
     QPointF pixelToScreen(QPointF pixelPos) const;
     void fitGridToView();
@@ -97,6 +100,8 @@ private:
     QVector<GridPoint*> gridPoints;
     int nextPointId;
     GridPoint *selectedPoint;
+    bool pointDragActive = false;
+    QPointF pointDragOffset;
     QGraphicsPixmapItem *imageItem;
     QImage backgroundImage;
     bool imageMode;

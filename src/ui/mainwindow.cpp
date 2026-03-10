@@ -3,6 +3,7 @@
 #include "hologramdialog.h"
 #include "sourceintensitydialog.h"
 #include "components/targetgridwidget.h"
+#include "components/patternpresetswidget.h"
 #include "components/arrowspinbox.h"
 #include "../camera/cameramanager.h"
 
@@ -31,9 +32,23 @@
 #include <QFileInfo>
 #include <QApplication>
 #include <QDebug>
+#include <QActionGroup>
+#include <QGuiApplication>
+#include <QPainter>
+#include <QScreen>
+#include <QWindow>
 
 namespace {
 constexpr int kImageTabIndex = 2;
+constexpr int kDefaultMonitorNumber = 2;
+constexpr int kDefaultActiveWidth = 1272;
+constexpr int kDefaultActiveHeight = 1024;
+constexpr int kDefaultActiveOffsetX = 0;
+constexpr int kDefaultActiveOffsetY = 0;
+
+QString hardwareConfigPath() {
+    return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
+}
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -41,14 +56,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowIcon(QIcon(":/favicon.ico"));
     setMinimumSize(800, 600);
 
-    QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
-    QSettings settings(configPath, QSettings::IniFormat);
-    
+    QSettings settings(configPath(), QSettings::IniFormat);
+
     slmWidth = settings.value("Hardware/SLM_Width", 1920).toInt();
     slmHeight = settings.value("Hardware/SLM_Height", 1080).toInt();
     slmPixelSize = settings.value("Hardware/SLM_PixelSize", 8.0).toDouble();
     cameraBackend = settings.value("Hardware/CameraBackend", 0).toInt();
-    
+
     camWidth = settings.value("Hardware/Cam_Width", 1920).toInt();
     camHeight = settings.value("Hardware/Cam_Height", 1080).toInt();
     camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
@@ -56,10 +70,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
 
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
+    slmOutputMode = settings.value("Hardware/SLM_OutputMode", DllOutputMode).toInt();
+    selectedMonitorNumber = settings.value("Hardware/SLM_SelectedMonitor", kDefaultMonitorNumber).toInt();
+    slmActiveWidth = settings.value("Hardware/SLM_ActiveWidth", kDefaultActiveWidth).toInt();
+    slmActiveHeight = settings.value("Hardware/SLM_ActiveHeight", kDefaultActiveHeight).toInt();
+    slmActiveOffsetX = settings.value("Hardware/SLM_ActiveOffsetX", kDefaultActiveOffsetX).toInt();
+    slmActiveOffsetY = settings.value("Hardware/SLM_ActiveOffsetY", kDefaultActiveOffsetY).toInt();
+    correctionMaskPath = settings.value("Hardware/SLM_CorrectionPath", "").toString();
 
     setupUI();
-    applyTheme(isDarkMode); 
-    
+    applyTheme(isDarkMode);
+
     camManager = new CameraManager(cameraBackend, this);
     setupConnections();
 
@@ -68,6 +89,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     if (!slmLibrary.load()) {
         qWarning() << "Could not load Image_Control.dll! Ensure it is in the build folder.";
     }
+
+    tryAutoApplySavedCorrection();
 }
 
 MainWindow::~MainWindow() {
@@ -76,7 +99,9 @@ MainWindow::~MainWindow() {
         delete camManager;
         camManager = nullptr;
     }
-    
+
+    clearDirectOutput();
+
     // Safety check: close SLM if app is closed
     if (slmLibrary.isLoaded()) {
         auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
@@ -107,28 +132,36 @@ void MainWindow::setupUI() {
 
 void MainWindow::createMenus() {
     QMenu *fileMenu = menuBar()->addMenu("&File");
-    
+
     QAction *settingsAction = fileMenu->addAction("Hardware Settings...");
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsDialog);
-    
-    // --- Correction Map loaded via File Menu ---
+
     QAction *corrAction = fileMenu->addAction("Load SLM Correction Mask...");
     connect(corrAction, &QAction::triggered, this, &MainWindow::loadCorrectionFile);
 
+    QAction *clearCorrAction = fileMenu->addAction("Clear SLM Correction");
+    connect(clearCorrAction, &QAction::triggered, this, &MainWindow::clearCorrectionMask);
+
     QAction *sourceAction = fileMenu->addAction("Source Intensity...");
     connect(sourceAction, &QAction::triggered, this, &MainWindow::openSourceIntensityDialog);
-    
+
     fileMenu->addSeparator();
     fileMenu->addAction("Exit", this, &QWidget::close);
-    
+
     QMenu *viewMenu = menuBar()->addMenu("&View");
     QAction *themeAction = viewMenu->addAction("Toggle Light/Dark Theme");
     connect(themeAction, &QAction::triggered, this, &MainWindow::toggleTheme);
-    
+
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
     QAction *holoAction = toolsMenu->addAction("Create Hologram...");
     connect(holoAction, &QAction::triggered, this, &MainWindow::openHologramGenerator);
-    
+
+    monitorSelectionMenu = toolsMenu->addMenu("Select Monitor");
+    monitorActionGroup = new QActionGroup(this);
+    monitorActionGroup->setExclusive(true);
+    connect(monitorSelectionMenu, &QMenu::aboutToShow, this, &MainWindow::refreshMonitorSelectionMenu);
+    connect(monitorActionGroup, &QActionGroup::triggered, this, &MainWindow::onMonitorActionTriggered);
+
     menuBar()->addMenu("&Help");
 }
 
@@ -147,7 +180,7 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     titleBarLayout->addStretch();
     
     gridMaxMinBtn = new QPushButton();
-    gridMaxMinBtn->setText("[↑]");  // Maximize symbol (up arrow)
+    gridMaxMinBtn->setText("[Ã¢â€ â€˜]");  // Maximize symbol (up arrow)
     gridMaxMinBtn->setMaximumWidth(28);
     gridMaxMinBtn->setMaximumHeight(20);
     gridMaxMinBtn->setStyleSheet("padding: 0px; font-size: 12px;");
@@ -238,17 +271,22 @@ void MainWindow::createControls(QGridLayout *layout) {
     
     QWidget *manualTab = new QWidget();
     QVBoxLayout *manualLayout = new QVBoxLayout(manualTab);
-    QLabel *manualLabel = new QLabel("Click on the grid to add target points.\nSelect a point and use arrow keys to move it.\nPress Delete to remove selected point.\nCoordinates centered at (0,0) - range from -X/2 to +X/2 and -Y/2 to +Y/2.");
-    manualLabel->setStyleSheet("color: #aaa; font-size: 11px;");
-    manualLayout->addWidget(manualLabel);
     QHBoxLayout *manualBtns = new QHBoxLayout();
-    manualBtns->addWidget(new QPushButton("Add Trap to SLM"));
-    manualBtns->addWidget(new QPushButton("Clear All Points"));
+    addPointsBtn = new QPushButton("Add Points");
+    clearAllPointsBtn = new QPushButton("Clear All");
+    manualBtns->addWidget(addPointsBtn);
+    manualBtns->addWidget(clearAllPointsBtn);
     manualLayout->addLayout(manualBtns);
+
+    trapTable = new QTableWidget(0, 3);
+    trapTable->setHorizontalHeaderLabels({"No", "X", "Y"});
+    trapTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    manualLayout->addWidget(trapTable);
     manualLayout->addStretch();
     
     targetModeTabs->addTab(manualTab, "Manual");
-    targetModeTabs->addTab(new QWidget(), "Pattern");
+    patternPresetsWidget = new PatternPresetsWidget(camWidth, camHeight);
+    targetModeTabs->addTab(patternPresetsWidget, "Pattern");
 
     QWidget *imageTab = new QWidget();
     QVBoxLayout *imageLayout = new QVBoxLayout(imageTab);
@@ -271,27 +309,7 @@ void MainWindow::createControls(QGridLayout *layout) {
     targetModeTabs->addTab(imageTab, "Image");
     targetModeTabs->addTab(new QWidget(), "Camera");
 
-    trapListContainer = new QWidget();
-    QVBoxLayout *trapListLayout = new QVBoxLayout(trapListContainer);
-    trapListLayout->setContentsMargins(0, 5, 0, 0);
-    trapTable = new QTableWidget(0, 5);
-    trapTable->setHorizontalHeaderLabels({"#", "X (centered)", "Y (centered)", "Intensity", "Size"});
-    trapTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    
-    // Create buttons but store as members without displaying in trap list
-    addTrapBtn = new QPushButton("Add Trap");
-    removeTrapBtn = new QPushButton("Remove Trap");
-    clearTrapsBtn = new QPushButton("Clear All");
-    // Buttons are hidden since they're available in the Manual tab
-    addTrapBtn->hide();
-    removeTrapBtn->hide();
-    clearTrapsBtn->hide();
-    
-    trapListLayout->addWidget(new QLabel("Active Traps:"));
-    trapListLayout->addWidget(trapTable);
-
     leftCol->addWidget(targetModeTabs);
-    leftCol->addWidget(trapListContainer);
 
     // Wrap bottom controls into a single widget for easy hide/show
     controlsRow = new QWidget();
@@ -384,39 +402,24 @@ void MainWindow::setupConnections() {
     connect(saveMaskBtn, &QPushButton::clicked, this, &MainWindow::savePhaseMask);
     connect(loadTargetImageBtn, &QPushButton::clicked, this, &MainWindow::loadTargetImage);
     connect(clearTargetImageBtn, &QPushButton::clicked, this, &MainWindow::clearTargetImage);
+    connect(patternPresetsWidget, &PatternPresetsWidget::patternGenerated, this, &MainWindow::onPatternGenerated);
     
     // Grid Widget connections
     connect(targetGridWidget, &TargetGridWidget::pointAdded, this, &MainWindow::onGridPointAdded);
     connect(targetGridWidget, &TargetGridWidget::pointMoved, this, &MainWindow::onGridPointMoved);
     connect(targetGridWidget, &TargetGridWidget::pointRemoved, this, &MainWindow::onGridPointRemoved);
     connect(targetGridWidget, &TargetGridWidget::pointSelected, this, &MainWindow::onGridPointSelected);
-    
-    // Trap table button connections
-    connect(addTrapBtn, &QPushButton::clicked, this, [this]() {
-        // Add current grid points as traps
-        auto points = targetGridWidget->getAllPoints();
-        for (const auto &point : points) {
-            if (!gridPointData.contains(point.first)) {
-                gridPointData[point.first] = point.second;
-            }
-        }
+    // Manual tab button connections
+    connect(addPointsBtn, &QPushButton::clicked, this, [this]() {
+        targetGridWidget->addPoint(QPointF(0, 0));
+        targetGridWidget->setFocus();
     });
-    
-    connect(removeTrapBtn, &QPushButton::clicked, this, [this]() {
-        if (trapTable->currentRow() >= 0) {
-            int row = trapTable->currentRow();
-            bool ok;
-            int pointId = trapTable->item(row, 0)->text().toInt(&ok);
-            if (ok && gridPointData.contains(pointId)) {
-                gridPointData.remove(pointId);
-                targetGridWidget->removePoint(pointId);
-            }
-        }
-    });
-    
-    connect(clearTrapsBtn, &QPushButton::clicked, this, [this]() {
-        gridPointData.clear();
+
+    connect(clearAllPointsBtn, &QPushButton::clicked, this, [this]() {
         targetGridWidget->clearAllPoints();
+        gridPointData.clear();
+        trapTable->setRowCount(0);
+        selectedPointId = -1;
     });
 
     connect(camSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), camManager, &CameraManager::changeCamera);
@@ -448,7 +451,7 @@ void MainWindow::setupConnections() {
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
-                          laserWavelength, fourierFocalLength, this);
+                          laserWavelength, fourierFocalLength, slmOutputMode, this);
 
     if (dialog.exec() == QDialog::Accepted) {
         const int prevSlmWidth = slmWidth;
@@ -467,8 +470,7 @@ void MainWindow::openSettingsDialog() {
         laserWavelength = dialog.getWavelength();
         fourierFocalLength = dialog.getFocalLength();
 
-        QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
-        QSettings settings(configPath, QSettings::IniFormat);
+        QSettings settings(configPath(), QSettings::IniFormat);
 
         settings.setValue("Hardware/SLM_Width", slmWidth);
         settings.setValue("Hardware/SLM_Height", slmHeight);
@@ -478,7 +480,10 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/Cam_Height", camHeight);
         settings.setValue("Hardware/Cam_PixelSize", camPixelSize);
         settings.setValue("Optical/Wavelength", laserWavelength);
+        slmOutputMode = dialog.getSlmOutputMode();
+
         settings.setValue("Optical/FocalLength", fourierFocalLength);
+        settings.setValue("Hardware/SLM_OutputMode", slmOutputMode);
         settings.sync();
 
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
@@ -487,6 +492,9 @@ void MainWindow::openSettingsDialog() {
         targetGridWidget->setGridResolution(camWidth, camHeight);
         targetGridWidget->centerView();
         targetGridWidget->clearAllPoints();
+        if (patternPresetsWidget) {
+            patternPresetsWidget->setCameraResolution(camWidth, camHeight);
+        }
 
         if (!loadedTargetImageOriginal.isNull()) {
             loadedTargetImageGray = loadedTargetImageOriginal.convertToFormat(QImage::Format_Grayscale8).scaled(
@@ -517,7 +525,7 @@ void MainWindow::openSettingsDialog() {
             QMessageBox::information(this, "Restart Required",
                 "You have changed the Camera Engine. Please restart the application for this to take effect.");
         } else {
-            statusBar()->showMessage("Settings saved to: " + configPath, 5000);
+            statusBar()->showMessage("Settings saved to: " + configPath(), 5000);
         }
     }
 }
@@ -638,8 +646,6 @@ void MainWindow::clearTargetImage() {
 }
 
 void MainWindow::onTabChanged(int index) {
-    trapListContainer->setVisible(index == 0 || index == 3);
-
     if (index == kImageTabIndex) {
         targetGridWidget->setImageMode(true);
         if (!loadedTargetImageGray.isNull()) {
@@ -675,10 +681,10 @@ void MainWindow::onGridPointAdded(int pointId, QPointF pixelCoords) {
     trapTable->setItem(row, 0, new QTableWidgetItem(QString::number(pointId)));
     trapTable->setItem(row, 1, new QTableWidgetItem(QString::number((int)pixelCoords.x())));
     trapTable->setItem(row, 2, new QTableWidgetItem(QString::number((int)pixelCoords.y())));
-    trapTable->setItem(row, 3, new QTableWidgetItem("1.0"));   // Default intensity
-    trapTable->setItem(row, 4, new QTableWidgetItem("5.0"));   // Default size
     
-    statusBar()->showMessage(QString("Point #%1 added at (%2, %3)").arg(pointId).arg((int)pixelCoords.x()).arg((int)pixelCoords.y()), 3000);
+    if (!suppressGridStatusMessages) {
+        statusBar()->showMessage(QString("Point #%1 added at (%2, %3)").arg(pointId).arg((int)pixelCoords.x()).arg((int)pixelCoords.y()), 3000);
+    }
 }
 
 void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
@@ -728,12 +734,30 @@ void MainWindow::onGridPointSelected(int pointId) {
     statusBar()->showMessage(QString("Point #%1 selected (use arrow keys to move, Delete to remove)").arg(pointId), 3000);
 }
 
+void MainWindow::onPatternGenerated(const QVector<QPointF> &points, const QString &summary) {
+    replaceGridWithPoints(points);
+    statusBar()->showMessage(summary, 4000);
+}
+
+void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
+    suppressGridStatusMessages = true;
+    selectedPointId = -1;
+
+    gridPointData.clear();
+    trapTable->setRowCount(0);
+    targetGridWidget->clearAllPoints();
+
+    for (const QPointF &point : points) {
+        targetGridWidget->addPoint(point);
+    }
+
+    suppressGridStatusMessages = false;
+}
 void MainWindow::toggleTheme() {
     isDarkMode = !isDarkMode;
     applyTheme(isDarkMode);
     
-    QString configPath = QCoreApplication::applicationDirPath() + "/hardware_config.ini";
-    QSettings settings(configPath, QSettings::IniFormat);
+    QSettings settings(configPath(), QSettings::IniFormat);
     settings.setValue("UI/DarkMode", isDarkMode);
     settings.sync();
 }
@@ -783,6 +807,202 @@ void MainWindow::applyTheme(bool dark) {
     // Update grid widget theme
     if (targetGridWidget) {
         targetGridWidget->setDarkMode(dark);
+    }
+}
+QString MainWindow::configPath() const {
+    return hardwareConfigPath();
+}
+
+bool MainWindow::isSelectedMonitorAvailable() const {
+    const int count = QGuiApplication::screens().size();
+    return selectedMonitorNumber >= 1 && selectedMonitorNumber <= count;
+}
+
+QScreen *MainWindow::selectedScreen() const {
+    if (!isSelectedMonitorAvailable()) {
+        return nullptr;
+    }
+    return QGuiApplication::screens().at(selectedMonitorNumber - 1);
+}
+
+void MainWindow::persistSelectedMonitor() {
+    QSettings settings(configPath(), QSettings::IniFormat);
+    settings.setValue("Hardware/SLM_SelectedMonitor", selectedMonitorNumber);
+    settings.sync();
+}
+
+void MainWindow::persistCorrectionPath(const QString &path) {
+    correctionMaskPath = path;
+    QSettings settings(configPath(), QSettings::IniFormat);
+    if (path.isEmpty()) {
+        settings.remove("Hardware/SLM_CorrectionPath");
+    } else {
+        settings.setValue("Hardware/SLM_CorrectionPath", path);
+    }
+    settings.sync();
+}
+
+void MainWindow::ensureDirectOutputWindow() {
+    if (directOutputWindow) {
+        return;
+    }
+
+    directOutputWindow = new QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    directOutputWindow->setWindowFlag(Qt::BypassWindowManagerHint, true);
+    directOutputLabel = new QLabel(directOutputWindow);
+    directOutputLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    directOutputLabel->setScaledContents(false);
+}
+
+void MainWindow::displayDirectOutput(const QImage &finalMask) {
+    QScreen *screen = selectedScreen();
+    if (!screen) {
+        return;
+    }
+
+    ensureDirectOutputWindow();
+
+    const QRect screenGeometry = screen->geometry();
+    QImage canvas(screenGeometry.size(), QImage::Format_Grayscale8);
+    canvas.fill(0);
+
+    // Always render at SLM settings resolution, not full monitor resolution.
+    const int targetW = qBound(1, slmWidth, canvas.width());
+    const int targetH = qBound(1, slmHeight, canvas.height());
+    const int maxOffsetX = qMax(0, canvas.width() - targetW);
+    const int maxOffsetY = qMax(0, canvas.height() - targetH);
+    const int drawX = qBound(0, slmActiveOffsetX, maxOffsetX);
+    const int drawY = qBound(0, slmActiveOffsetY, maxOffsetY);
+
+    QRect targetRect(drawX, drawY, targetW, targetH);
+
+    QImage mapped = finalMask;
+    if (mapped.size() != targetRect.size()) {
+        mapped = mapped.scaled(targetRect.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    QPainter painter(&canvas);
+    painter.drawImage(targetRect.topLeft(), mapped);
+    painter.end();
+
+    directOutputWindow->setGeometry(screenGeometry);
+    directOutputLabel->setGeometry(0, 0, canvas.width(), canvas.height());
+    directOutputLabel->setPixmap(QPixmap::fromImage(canvas));
+
+    directOutputWindow->createWinId();
+    if (directOutputWindow->windowHandle()) {
+        directOutputWindow->windowHandle()->setScreen(screen);
+    }
+
+    directOutputWindow->showFullScreen();
+    directOutputWindow->raise();
+}
+
+void MainWindow::clearDirectOutput() {
+    if (!directOutputWindow) {
+        return;
+    }
+
+    directOutputWindow->hide();
+}
+
+void MainWindow::refreshMonitorSelectionMenu() {
+    if (!monitorSelectionMenu || !monitorActionGroup) {
+        return;
+    }
+
+    monitorSelectionMenu->clear();
+    const QList<QScreen *> screens = QGuiApplication::screens();
+
+    for (QAction *action : monitorActionGroup->actions()) {
+        monitorActionGroup->removeAction(action);
+        action->deleteLater();
+    }
+
+    if (screens.isEmpty()) {
+        QAction *noneAction = monitorSelectionMenu->addAction("No monitors detected");
+        noneAction->setEnabled(false);
+        return;
+    }
+
+    for (int i = 0; i < screens.size(); ++i) {
+        QScreen *screen = screens.at(i);
+        const int monitorNumber = i + 1;
+        const QSize size = screen->geometry().size();
+        QString label = QString("Monitor %1: %2 (%3x%4)")
+            .arg(monitorNumber)
+            .arg(screen->name())
+            .arg(size.width())
+            .arg(size.height());
+
+        QAction *action = monitorSelectionMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(monitorNumber);
+        action->setChecked(monitorNumber == selectedMonitorNumber);
+        monitorActionGroup->addAction(action);
+    }
+
+    if (!isSelectedMonitorAvailable()) {
+        monitorSelectionMenu->addSeparator();
+        QAction *missingAction = monitorSelectionMenu->addAction(
+            QString("Selected monitor %1 is not connected").arg(selectedMonitorNumber));
+        missingAction->setEnabled(false);
+    }
+}
+
+void MainWindow::onMonitorActionTriggered(QAction *action) {
+    if (!action) {
+        return;
+    }
+
+    bool ok = false;
+    const int monitor = action->data().toInt(&ok);
+    if (!ok || monitor < 1) {
+        return;
+    }
+
+    selectedMonitorNumber = monitor;
+    persistSelectedMonitor();
+    statusBar()->showMessage(QString("SLM monitor set to Monitor %1").arg(selectedMonitorNumber), 4000);
+}
+
+void MainWindow::tryAutoApplySavedCorrection() {
+    if (correctionMaskPath.isEmpty()) {
+        return;
+    }
+
+    QFileInfo fileInfo(correctionMaskPath);
+    if (!fileInfo.exists()) {
+        QMessageBox::warning(this,
+                             "Correction Mask",
+                             "Saved correction file is missing and has been cleared:\n" + correctionMaskPath);
+        persistCorrectionPath(QString());
+        return;
+    }
+
+    QImage loadedImage = QImage(correctionMaskPath).convertToFormat(QImage::Format_Grayscale8);
+    if (loadedImage.isNull()) {
+        QMessageBox::warning(this,
+                             "Correction Mask",
+                             "Saved correction file could not be loaded and has been cleared:\n" + correctionMaskPath);
+        persistCorrectionPath(QString());
+        return;
+    }
+
+    if (loadedImage.size() != QSize(slmWidth, slmHeight)) {
+        loadedImage = loadedImage.scaled(slmWidth, slmHeight);
+    }
+
+    correctionMask = loadedImage;
+    previewCorrectionCb->setEnabled(true);
+    previewCorrectionCb->setChecked(true);
+    updatePhasePreview();
+
+    if (isSelectedMonitorAvailable()) {
+        sendToSLM();
+        statusBar()->showMessage("Saved correction mask auto-applied on startup.", 5000);
+    } else {
+        statusBar()->showMessage("Saved correction loaded. Select monitor in Tools > Select Monitor to apply.", 7000);
     }
 }
 // ==========================================
@@ -909,15 +1129,15 @@ void MainWindow::loadCorrectionFile() {
     QString fileName = QFileDialog::getOpenFileName(this, "Select Flatness Correction Mask", "", "Images (*.png *.bmp *.jpg)");
     if (!fileName.isEmpty()) {
         QImage loadedImage = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
-        
+
         // Check and warn about size mismatch
         if (loadedImage.size() != QSize(slmWidth, slmHeight)) {
             QString origSize = QString::number(loadedImage.width()) + "x" + QString::number(loadedImage.height());
             QString targetSize = QString::number(slmWidth) + "x" + QString::number(slmHeight);
-            int ret = QMessageBox::warning(this, "Size Mismatch", 
+            int ret = QMessageBox::warning(this, "Size Mismatch",
                 "Correction mask size (" + origSize + ") does not match SLM resolution (" + targetSize + ").\n\nResize to SLM dimensions?",
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-            
+
             if (ret == QMessageBox::Yes) {
                 loadedImage = loadedImage.scaled(slmWidth, slmHeight);
             } else {
@@ -925,85 +1145,129 @@ void MainWindow::loadCorrectionFile() {
                 return;
             }
         }
-        
+
         correctionMask = loadedImage;
         previewCorrectionCb->setEnabled(true);
-        previewCorrectionCb->setChecked(true);  // Auto-enable preview display
-        
+        previewCorrectionCb->setChecked(true);
+
+        persistCorrectionPath(QFileInfo(fileName).absoluteFilePath());
+
         statusBar()->showMessage("Correction Mask loaded. Automatically sending to SLM...", 5000);
-        updatePhasePreview(); 
-        
-        // --- FIX: ALWAYS force a hardware update the moment it is loaded ---
-        sendToSLM(); 
+        updatePhasePreview();
+        sendToSLM();
     }
 }
 
+void MainWindow::clearCorrectionMask() {
+    if (correctionMask.isNull()) {
+        statusBar()->showMessage("No correction mask is currently loaded.", 3000);
+        return;
+    }
+
+    correctionMask = QImage();
+    persistCorrectionPath(QString());
+
+    previewCorrectionCb->setChecked(false);
+    previewCorrectionCb->setEnabled(false);
+    updatePhasePreview();
+
+    if (!currentMask.isNull()) {
+        sendToSLM();
+        statusBar()->showMessage("SLM correction removed. Target mask remains active.", 5000);
+        return;
+    }
+
+    if (slmOutputMode == DirectScreenOutputMode) {
+        clearDirectOutput();
+    } else if (slmLibrary.isLoaded()) {
+        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
+        if (winTerm) {
+            winTerm(slmWindowID);
+        }
+    }
+
+    phaseMaskLabel->clear();
+    phaseMaskLabel->setText("SLM Offline");
+    statusBar()->showMessage("SLM correction removed.", 5000);
+}
+
 void MainWindow::sendToSLM() {
-    // If absolutely nothing is loaded, abort.
     if (currentMask.isNull() && correctionMask.isNull()) {
         QMessageBox::warning(this, "Error", "No mask or correction loaded to send!");
         return;
     }
 
-    if (!slmLibrary.isLoaded()) {
-        QMessageBox::critical(this, "DLL Error", "Image_Control.dll is not loaded.");
-        return;
-    }
-
-    auto winSettings = (Window_Settings_Func)slmLibrary.resolve("Window_Settings");
-    auto winArrayToDisplay = (Window_Array_to_Display_Func)slmLibrary.resolve("Window_Array_to_Display");
-
-    if (!winSettings || !winArrayToDisplay) {
-        QMessageBox::critical(this, "DLL Error", "Could not find SLM functions inside the DLL.");
+    if (!isSelectedMonitorAvailable()) {
+        QMessageBox::warning(this,
+                             "Monitor Selection",
+                             QString("Selected monitor %1 is not connected.\nChoose a monitor in Tools > Select Monitor.")
+                                 .arg(selectedMonitorNumber));
         return;
     }
 
     QImage finalMask = composeFullResolutionMask();
     if (finalMask.isNull()) {
-        // This should not happen due to earlier checks, but be defensive
         QMessageBox::warning(this, "Error", "Unable to compose final mask for SLM.");
         return;
     }
 
-    // Push to Hardware
-    winSettings(2, slmWindowID, 0, 0);
-    
-    int width = finalMask.width();
-    int height = finalMask.height();
-    uint8_t* rawData = finalMask.bits();
+    if (slmOutputMode == DirectScreenOutputMode) {
+        displayDirectOutput(finalMask);
+    } else {
+        if (!slmLibrary.isLoaded()) {
+            QMessageBox::critical(this, "DLL Error", "Image_Control.dll is not loaded.");
+            return;
+        }
 
-    winArrayToDisplay(rawData, width, height, slmWindowID, width * height);
+        auto winSettings = (Window_Settings_Func)slmLibrary.resolve("Window_Settings");
+        auto winArrayToDisplay = (Window_Array_to_Display_Func)slmLibrary.resolve("Window_Array_to_Display");
 
-    // Update Status Bar intelligently
+        if (!winSettings || !winArrayToDisplay) {
+            QMessageBox::critical(this, "DLL Error", "Could not find SLM functions inside the DLL.");
+            return;
+        }
+
+        winSettings(selectedMonitorNumber, slmWindowID, 0, 0);
+
+        int width = finalMask.width();
+        int height = finalMask.height();
+        uint8_t *rawData = finalMask.bits();
+
+        winArrayToDisplay(rawData, width, height, slmWindowID, width * height);
+    }
+
     if (!correctionMask.isNull() && currentMask.isNull()) {
         statusBar()->showMessage("Background Correction Mask sent to SLM.", 5000);
     } else if (!correctionMask.isNull()) {
-        statusBar()->showMessage("Phase Mask + Correction sent to SLM hardware.", 5000);
+        statusBar()->showMessage("Phase Mask + Correction sent to SLM.", 5000);
     } else {
-        statusBar()->showMessage("Phase Mask sent to SLM hardware.", 5000);
+        statusBar()->showMessage("Phase Mask sent to SLM.", 5000);
     }
 }
 
 void MainWindow::clearSLM() {
-    currentMask = QImage(); // Wipe target mask from memory
+    currentMask = QImage();
     updatePhasePreview();
-    
-    if (!slmLibrary.isLoaded()) return;
 
     if (!correctionMask.isNull()) {
-        // --- FIX: Rely on the smarter sendToSLM() to handle the background mask ---
-        sendToSLM(); 
+        sendToSLM();
         phaseMaskLabel->setText("Cleared (Correction Active)");
-        statusBar()->showMessage("Target cleared. SLM is maintaining hardware flatness correction.", 5000);
-    } else {
-        // No correction loaded at all, completely terminate display
-        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
-        if (winTerm) winTerm(slmWindowID); 
-        
-        phaseMaskLabel->clear();
-        phaseMaskLabel->setText("SLM Offline");
-        statusBar()->showMessage("SLM display completely terminated.", 3000);
+        statusBar()->showMessage("Target cleared. SLM correction remains active.", 5000);
+        return;
     }
+
+    if (slmOutputMode == DirectScreenOutputMode) {
+        clearDirectOutput();
+    } else if (slmLibrary.isLoaded()) {
+        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
+        if (winTerm) {
+            winTerm(slmWindowID);
+        }
+    }
+
+    phaseMaskLabel->clear();
+    phaseMaskLabel->setText("SLM Offline");
+    statusBar()->showMessage("SLM display completely terminated.", 3000);
 }
 
 void MainWindow::toggleGridEnlarged() {
@@ -1043,7 +1307,7 @@ void MainWindow::toggleGridEnlarged() {
         mainLayout->update();
         
         // Update button to show minimize symbol
-        gridMaxMinBtn->setText("[↓]");  // Minimize symbol (down arrow)
+        gridMaxMinBtn->setText("[Ã¢â€ â€œ]");  // Minimize symbol (down arrow)
         gridMaxMinBtn->setToolTip("Restore to normal view");
     } else {
         // Minimize grid - show all controls, restore grid position
@@ -1071,10 +1335,17 @@ void MainWindow::toggleGridEnlarged() {
         mainLayout->update();
         
         // Update button to show maximize symbol
-        gridMaxMinBtn->setText("[↑]");  // Maximize symbol (up arrow)
+        gridMaxMinBtn->setText("[Ã¢â€ â€˜]");  // Maximize symbol (up arrow)
         gridMaxMinBtn->setToolTip("Enlarge grid view");
     }
 }
+
+
+
+
+
+
+
 
 
 

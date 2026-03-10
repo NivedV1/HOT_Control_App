@@ -20,7 +20,13 @@
 // Forward declarations
 class CameraManager;
 class QGridLayout;
+class QMenu;
+class QAction;
+class QActionGroup;
+class QScreen;
+class QWidget;
 class TargetGridWidget;
+class PatternPresetsWidget;
 
 // --- DLL Function Pointers (Bypasses the need for LabVIEW's extcode.h) ---
 typedef void (__stdcall *Window_Settings_Func)(int32_t MonitorNumber, int32_t WindowNumber015, int32_t XPixelShift, int32_t YPixelShift);
@@ -52,19 +58,28 @@ private slots:
 
     // SLM Slots
     void receiveHologram(const QImage &mask);
-    void sendHologramToSLM(const QImage &mask); // NEW: Direct send to SLM from dialog
+    void sendHologramToSLM(const QImage &mask);
     void loadPhasePattern();
-    void loadCorrectionFile();  // Connected to the File Menu
+    void loadCorrectionFile();
+    void clearCorrectionMask();
     void sendToSLM();
     void clearSLM();
+    void refreshMonitorSelectionMenu();
+    void onMonitorActionTriggered(QAction *action);
 
     // Grid Widget Slots
     void onGridPointAdded(int pointId, QPointF physicalCoords);
     void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
     void onGridPointRemoved(int pointId);
     void onGridPointSelected(int pointId);
+    void onPatternGenerated(const QVector<QPointF> &points, const QString &summary);
 
 private:
+    enum SlmOutputMode {
+        DllOutputMode = 0,
+        DirectScreenOutputMode = 1
+    };
+
     // Grid enlargement/minimize
     bool gridEnlarged = false;
     QWidget *gridTitleBar = nullptr;
@@ -74,8 +89,8 @@ private:
     QGridLayout *mainLayout = nullptr;
 
     // Control section wrappers for hiding/showing
-    QWidget *toolsRow = nullptr;      // Row 2 with tools
-    QWidget *controlsRow = nullptr;   // Row 3 with main controls
+    QWidget *toolsRow = nullptr;
+    QWidget *controlsRow = nullptr;
 
     void setupUI();
     void createMenus();
@@ -84,27 +99,32 @@ private:
     void setupConnections();
     void applyTheme(bool dark);
     void toggleGridEnlarged();
+    void replaceGridWithPoints(const QVector<QPointF> &points);
 
-    // Helper function to manage the preview screen
     void updatePhasePreview();
-
-    // returns a full-resolution image that combines currentMask and correctionMask (modulo 256)
-    // if both masks are empty the returned image will be null
     QImage composeFullResolutionMask() const;
+    QString configPath() const;
+    bool isSelectedMonitorAvailable() const;
+    QScreen *selectedScreen() const;
+    void persistSelectedMonitor();
+    void persistCorrectionPath(const QString &path);
+    void ensureDirectOutputWindow();
+    void displayDirectOutput(const QImage &finalMask);
+    void clearDirectOutput();
+    void tryAutoApplySavedCorrection();
 
     // UI Pointers
     TargetGridWidget *targetGridWidget;
     QTabWidget *targetModeTabs;
-    QWidget *trapListContainer;
+    PatternPresetsWidget *patternPresetsWidget = nullptr;
     QTableWidget *trapTable;
     QLabel *phaseMaskLabel;
     QLabel *resolutionLabel;
     QLabel *fpsLabel;
     QCheckBox *previewCorrectionCb;
     QPushButton *saveMaskBtn;
-    QPushButton *addTrapBtn;
-    QPushButton *removeTrapBtn;
-    QPushButton *clearTrapsBtn;
+    QPushButton *addPointsBtn;
+    QPushButton *clearAllPointsBtn;
 
     // Image tab controls/state
     QPushButton *loadTargetImageBtn;
@@ -148,13 +168,31 @@ private:
     QPushButton *clearSlmBtn;
 
     int slmWindowID = 0;
-    QImage currentMask;     // The target hologram
-    QImage correctionMask;  // The physical flatness correction
-    QLibrary slmLibrary;    // Dynamic DLL Loader
+    QImage currentMask;
+    QImage correctionMask;
+    QLibrary slmLibrary;
+
+    // SLM Output Routing State
+    int slmOutputMode = DllOutputMode;
+    int selectedMonitorNumber = 2;
+    int slmActiveWidth = 1272;
+    int slmActiveHeight = 1024;
+    int slmActiveOffsetX = 0;
+    int slmActiveOffsetY = 0;
+    QString correctionMaskPath;
+
+    QMenu *monitorSelectionMenu = nullptr;
+    QActionGroup *monitorActionGroup = nullptr;
+    QWidget *directOutputWindow = nullptr;
+    QLabel *directOutputLabel = nullptr;
 
     // Grid point data
-    QMap<int, QPointF> gridPointData;  // Maps point ID to physical coordinates
+    QMap<int, QPointF> gridPointData;
     int selectedPointId = -1;
+    bool suppressGridStatusMessages = false;
 };
 
 #endif // MAINWINDOW_H
+
+
+
