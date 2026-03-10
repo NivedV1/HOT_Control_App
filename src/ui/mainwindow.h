@@ -24,6 +24,9 @@ class QMenu;
 class QAction;
 class QActionGroup;
 class QScreen;
+class QSpinBox;
+class QDoubleSpinBox;
+class QTimer;
 class QWidget;
 class TargetGridWidget;
 class PatternPresetsWidget;
@@ -51,6 +54,12 @@ private slots:
     void onFPSUpdated(const QString &fpsString);
     void savePhaseMask();
     void updateCameraFeed(const QImage &img);
+
+    // Algorithm slots
+    void onAlgorithmSelectionChanged(int index);
+    void onGenerateGsMaskClicked();
+    void onGsAutoRunTimeout();
+    void onSendToSlmRequested();
 
     // Image tab slots
     void loadTargetImage();
@@ -113,6 +122,12 @@ private:
     void clearDirectOutput();
     void tryAutoApplySavedCorrection();
 
+    void updateAlgorithmSettingsUi();
+    void scheduleGsAutoRun();
+    bool generateAlgorithmMask(bool showWarnings);
+    QVector<float> defaultGsSourceAmplitude() const;
+    bool isGerchbergSaxtonSelected() const;
+
     // UI Pointers
     TargetGridWidget *targetGridWidget;
     QTabWidget *targetModeTabs;
@@ -125,6 +140,13 @@ private:
     QPushButton *saveMaskBtn;
     QPushButton *addPointsBtn;
     QPushButton *clearAllPointsBtn;
+
+    // Algorithm controls
+    QComboBox *algorithmCombo = nullptr;
+    QSpinBox *iterationsSpin = nullptr;
+    QLabel *relaxationLabel = nullptr;
+    QDoubleSpinBox *relaxationSpin = nullptr;
+    QPushButton *generateGsBtn = nullptr;
 
     // Image tab controls/state
     QPushButton *loadTargetImageBtn;
@@ -161,6 +183,7 @@ private:
     double laserWavelength = 1064.0;
     double fourierFocalLength = 100.0;
     bool isDarkMode = true;
+    bool autoRunGsEnabled = false;
 
     // SLM Pointers & State
     QPushButton *loadPhaseBtn;
@@ -186,6 +209,9 @@ private:
     QWidget *directOutputWindow = nullptr;
     QLabel *directOutputLabel = nullptr;
 
+    // Auto-run timer
+    QTimer *gsAutoRunTimer = nullptr;
+
     // Grid point data
     QMap<int, QPointF> gridPointData;
     int selectedPointId = -1;
@@ -193,6 +219,3 @@ private:
 };
 
 #endif // MAINWINDOW_H
-
-
-

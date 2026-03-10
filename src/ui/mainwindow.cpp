@@ -5,6 +5,7 @@
 #include "components/targetgridwidget.h"
 #include "components/patternpresetswidget.h"
 #include "components/arrowspinbox.h"
+#include "../core/algorithms/gs_algorithm.h"
 #include "../camera/cameramanager.h"
 
 #include <QVBoxLayout>
@@ -37,6 +38,7 @@
 #include <QPainter>
 #include <QScreen>
 #include <QWindow>
+#include <QTimer>
 
 namespace {
 constexpr int kImageTabIndex = 2;
@@ -45,6 +47,7 @@ constexpr int kDefaultActiveWidth = 1272;
 constexpr int kDefaultActiveHeight = 1024;
 constexpr int kDefaultActiveOffsetX = 0;
 constexpr int kDefaultActiveOffsetY = 0;
+constexpr int kGsAutoRunDebounceMs = 180;
 
 QString hardwareConfigPath() {
     return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
@@ -68,6 +71,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
     laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
     fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
+    autoRunGsEnabled = settings.value("Hardware/AutoRunGS", false).toBool();
 
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
     slmOutputMode = settings.value("Hardware/SLM_OutputMode", DllOutputMode).toInt();
@@ -325,12 +329,29 @@ void MainWindow::createControls(QGridLayout *layout) {
     QVBoxLayout *midCol = new QVBoxLayout();
     QGroupBox *algoGroup = new QGroupBox("Algorithm Settings");
     QFormLayout *algoForm = new QFormLayout();
-    QComboBox *algoCombo = new QComboBox();
-    algoCombo->addItems({"Gerchberg-Saxton", "Weighted GS"});
-    algoForm->addRow("Algorithm:", algoCombo);
-    algoForm->addRow("Iterations:", new ArrowSpinBox());
-    algoForm->addRow("Relaxation:", new ArrowDoubleSpinBox());
+
+    algorithmCombo = new QComboBox();
+    algorithmCombo->addItems({"Gerchberg-Saxton", "Weighted GS"});
+
+    iterationsSpin = new ArrowSpinBox();
+    iterationsSpin->setRange(1, 1000);
+    iterationsSpin->setValue(20);
+
+    relaxationLabel = new QLabel("Relaxation:");
+    relaxationSpin = new ArrowDoubleSpinBox();
+    relaxationSpin->setRange(0.0, 1.0);
+    relaxationSpin->setSingleStep(0.05);
+    relaxationSpin->setDecimals(2);
+    relaxationSpin->setValue(0.50);
+
+    generateGsBtn = new QPushButton("Generate GS Mask");
+
+    algoForm->addRow("Algorithm:", algorithmCombo);
+    algoForm->addRow("Iterations:", iterationsSpin);
+    algoForm->addRow(relaxationLabel, relaxationSpin);
+    algoForm->addRow(generateGsBtn);
     algoGroup->setLayout(algoForm);
+
     midCol->addWidget(algoGroup);
     midCol->addStretch();
 
@@ -403,6 +424,10 @@ void MainWindow::setupConnections() {
     connect(loadTargetImageBtn, &QPushButton::clicked, this, &MainWindow::loadTargetImage);
     connect(clearTargetImageBtn, &QPushButton::clicked, this, &MainWindow::clearTargetImage);
     connect(patternPresetsWidget, &PatternPresetsWidget::patternGenerated, this, &MainWindow::onPatternGenerated);
+
+    connect(algorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onAlgorithmSelectionChanged);
+    connect(generateGsBtn, &QPushButton::clicked, this, &MainWindow::onGenerateGsMaskClicked);
     
     // Grid Widget connections
     connect(targetGridWidget, &TargetGridWidget::pointAdded, this, &MainWindow::onGridPointAdded);
@@ -439,9 +464,16 @@ void MainWindow::setupConnections() {
 
     // SLM Connections
     connect(loadPhaseBtn, &QPushButton::clicked, this, &MainWindow::loadPhasePattern);
-    connect(sendSlmBtn, &QPushButton::clicked, this, &MainWindow::sendToSLM);
+    connect(sendSlmBtn, &QPushButton::clicked, this, &MainWindow::onSendToSlmRequested);
     connect(clearSlmBtn, &QPushButton::clicked, this, &MainWindow::clearSLM);
     connect(previewCorrectionCb, &QCheckBox::toggled, this, &MainWindow::updatePhasePreview);
+
+    gsAutoRunTimer = new QTimer(this);
+    gsAutoRunTimer->setSingleShot(true);
+    gsAutoRunTimer->setInterval(kGsAutoRunDebounceMs);
+    connect(gsAutoRunTimer, &QTimer::timeout, this, &MainWindow::onGsAutoRunTimeout);
+
+    updateAlgorithmSettingsUi();
 }
 
 // ==========================================
@@ -451,7 +483,7 @@ void MainWindow::setupConnections() {
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
-                          laserWavelength, fourierFocalLength, slmOutputMode, this);
+                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, this);
 
     if (dialog.exec() == QDialog::Accepted) {
         const int prevSlmWidth = slmWidth;
@@ -481,10 +513,16 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/Cam_PixelSize", camPixelSize);
         settings.setValue("Optical/Wavelength", laserWavelength);
         slmOutputMode = dialog.getSlmOutputMode();
+        autoRunGsEnabled = dialog.getAutoRunGsEnabled();
 
         settings.setValue("Optical/FocalLength", fourierFocalLength);
         settings.setValue("Hardware/SLM_OutputMode", slmOutputMode);
+        settings.setValue("Hardware/AutoRunGS", autoRunGsEnabled);
         settings.sync();
+
+        if (!autoRunGsEnabled && gsAutoRunTimer) {
+            gsAutoRunTimer->stop();
+        }
 
         resolutionLabel->setText(QString("Resolution: %1 x %2").arg(slmWidth).arg(slmHeight));
 
@@ -572,6 +610,151 @@ void MainWindow::onSourceIntensityApplied(const QVector<float> &intensityMap,
                              5000);
 }
 
+bool MainWindow::isGerchbergSaxtonSelected() const {
+    return algorithmCombo && algorithmCombo->currentIndex() == 0;
+}
+
+QVector<float> MainWindow::defaultGsSourceAmplitude() const {
+    const double defaultWaistPx = static_cast<double>(qMin(slmWidth, slmHeight)) / 6.0;
+    return GSAlgorithm::buildGaussianSourceAmplitude(slmWidth, slmHeight, defaultWaistPx);
+}
+
+void MainWindow::updateAlgorithmSettingsUi() {
+    const bool gsSelected = isGerchbergSaxtonSelected();
+
+    if (relaxationLabel) {
+        relaxationLabel->setVisible(!gsSelected);
+    }
+    if (relaxationSpin) {
+        relaxationSpin->setVisible(!gsSelected);
+    }
+
+    if (generateGsBtn) {
+        generateGsBtn->setText(gsSelected ? "Generate GS Mask" : "Generate (WGS unavailable)");
+    }
+}
+
+void MainWindow::onAlgorithmSelectionChanged(int index) {
+    Q_UNUSED(index);
+
+    updateAlgorithmSettingsUi();
+
+    if (!isGerchbergSaxtonSelected()) {
+        if (gsAutoRunTimer) {
+            gsAutoRunTimer->stop();
+        }
+        return;
+    }
+
+    scheduleGsAutoRun();
+}
+
+void MainWindow::onGenerateGsMaskClicked() {
+    generateAlgorithmMask(true);
+}
+
+void MainWindow::scheduleGsAutoRun() {
+    if (!autoRunGsEnabled || !isGerchbergSaxtonSelected() || !gsAutoRunTimer) {
+        return;
+    }
+
+    if (gridPointData.isEmpty()) {
+        gsAutoRunTimer->stop();
+        return;
+    }
+
+    gsAutoRunTimer->start();
+}
+
+void MainWindow::onGsAutoRunTimeout() {
+    if (!autoRunGsEnabled || !isGerchbergSaxtonSelected()) {
+        return;
+    }
+
+    if (gridPointData.isEmpty()) {
+        return;
+    }
+
+    generateAlgorithmMask(false);
+}
+
+bool MainWindow::generateAlgorithmMask(bool showWarnings) {
+    if (!isGerchbergSaxtonSelected()) {
+        if (showWarnings) {
+            QMessageBox::information(this, "Weighted GS", "Weighted GS is not implemented yet.");
+        }
+        return false;
+    }
+
+    if (gridPointData.isEmpty()) {
+        if (showWarnings) {
+            QMessageBox::warning(this, "GS Algorithm", "No target points found. Add points to the target grid.");
+        }
+        return false;
+    }
+
+    const int expectedSourceSize = slmWidth * slmHeight;
+    const bool usingDefaultSource = sourceIntensityMap.size() != expectedSourceSize;
+    const QVector<float> sourceAmplitude = usingDefaultSource ? defaultGsSourceAmplitude() : sourceIntensityMap;
+
+    QVector<GSAlgorithm::GSTargetPoint> targets;
+    targets.reserve(gridPointData.size());
+
+    for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
+        GSAlgorithm::GSTargetPoint target;
+        target.xCamPx = it.value().x();
+        target.yCamPx = -it.value().y(); // Convert Qt grid Y to Cartesian (+Y up).
+        targets.append(target);
+    }
+
+    GSAlgorithm::GSConfig config;
+    config.slmWidth = slmWidth;
+    config.slmHeight = slmHeight;
+    config.slmPixelSizeUm = slmPixelSize;
+    config.camWidth = camWidth;
+    config.camHeight = camHeight;
+    config.camPixelSizeUm = camPixelSize;
+    config.wavelengthNm = laserWavelength;
+    config.focalLengthMm = fourierFocalLength;
+    config.iterations = iterationsSpin ? iterationsSpin->value() : 20;
+
+    const GSAlgorithm::GSResult result = GSAlgorithm::runGerchbergSaxton(config, sourceAmplitude, targets);
+    if (!result.success) {
+        if (showWarnings) {
+            QMessageBox::warning(this, "GS Algorithm", result.error);
+        }
+        return false;
+    }
+
+    currentMask = result.phaseMask8Bit.convertToFormat(QImage::Format_Grayscale8);
+    if (currentMask.size() != QSize(slmWidth, slmHeight)) {
+        currentMask = currentMask.scaled(slmWidth, slmHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    updatePhasePreview();
+
+    const QString sourceMsg = usingDefaultSource
+        ? "Default Gaussian source used"
+        : "Source Intensity map used";
+    statusBar()->showMessage(QString("GS mask generated (%1 iterations, %2/%3 valid targets, %4).")
+                                 .arg(config.iterations)
+                                 .arg(result.usedTargetCount)
+                                 .arg(result.requestedTargetCount)
+                                 .arg(sourceMsg),
+                             4000);
+
+    return true;
+}
+
+void MainWindow::onSendToSlmRequested() {
+    if (isGerchbergSaxtonSelected() && !gridPointData.isEmpty()) {
+        if (!generateAlgorithmMask(true)) {
+            return;
+        }
+    }
+
+    sendToSLM();
+}
 void MainWindow::savePhaseMask() {
     // construct the image we actually want to write rather than relying on the scaled
     // widget pixmap (which may be resized to fit the label)
@@ -673,24 +856,26 @@ void MainWindow::onFPSUpdated(const QString &fpsString) {
 
 void MainWindow::onGridPointAdded(int pointId, QPointF pixelCoords) {
     gridPointData[pointId] = pixelCoords;
-    
+
     // Add row to trap table
     int row = trapTable->rowCount();
     trapTable->insertRow(row);
-    
+
     trapTable->setItem(row, 0, new QTableWidgetItem(QString::number(pointId)));
     trapTable->setItem(row, 1, new QTableWidgetItem(QString::number((int)pixelCoords.x())));
     trapTable->setItem(row, 2, new QTableWidgetItem(QString::number((int)pixelCoords.y())));
-    
+
     if (!suppressGridStatusMessages) {
         statusBar()->showMessage(QString("Point #%1 added at (%2, %3)").arg(pointId).arg((int)pixelCoords.x()).arg((int)pixelCoords.y()), 3000);
     }
+
+    scheduleGsAutoRun();
 }
 
 void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
     if (gridPointData.contains(pointId)) {
         gridPointData[pointId] = newPixelCoords;
-        
+
         // Update table row
         for (int row = 0; row < trapTable->rowCount(); ++row) {
             if (trapTable->item(row, 0)->text().toInt() == pointId) {
@@ -699,15 +884,16 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
                 break;
             }
         }
-        
+
         statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)").arg(pointId).arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()), 2000);
+        scheduleGsAutoRun();
     }
 }
 
 void MainWindow::onGridPointRemoved(int pointId) {
     if (gridPointData.contains(pointId)) {
         gridPointData.remove(pointId);
-        
+
         // Remove from table
         for (int row = 0; row < trapTable->rowCount(); ++row) {
             if (trapTable->item(row, 0)->text().toInt() == pointId) {
@@ -715,8 +901,9 @@ void MainWindow::onGridPointRemoved(int pointId) {
                 break;
             }
         }
-        
+
         statusBar()->showMessage(QString("Point #%1 removed").arg(pointId), 2000);
+        scheduleGsAutoRun();
     }
 }
 
@@ -752,11 +939,13 @@ void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
     }
 
     suppressGridStatusMessages = false;
+    scheduleGsAutoRun();
 }
+
 void MainWindow::toggleTheme() {
     isDarkMode = !isDarkMode;
     applyTheme(isDarkMode);
-    
+
     QSettings settings(configPath(), QSettings::IniFormat);
     settings.setValue("UI/DarkMode", isDarkMode);
     settings.sync();
@@ -1339,27 +1528,4 @@ void MainWindow::toggleGridEnlarged() {
         gridMaxMinBtn->setToolTip("Enlarge grid view");
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

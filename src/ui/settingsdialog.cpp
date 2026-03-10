@@ -1,14 +1,18 @@
 #include "settingsdialog.h"
 #include "components/arrowspinbox.h"
-#include <QVBoxLayout>
+
+#include <QCheckBox>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QDialogButtonBox>
 #include <QLabel>
+#include <QVBoxLayout>
 
 SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                int camW, int camH, double camPix,
-                               double wave, double focal, int slmOutputMode, QWidget *parent)
+                               double wave, double focal, int slmOutputMode,
+                               bool autoRunGsEnabled,
+                               QWidget *parent)
     : QDialog(parent) {
 
     setWindowTitle("Hardware Settings");
@@ -29,10 +33,14 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     slmOutputModeCombo->addItems({"DLL", "Direct Screen"});
     slmOutputModeCombo->setCurrentIndex((slmOutputMode == 1) ? 1 : 0);
 
+    autoRunGsCheck = new QCheckBox(this);
+    autoRunGsCheck->setChecked(autoRunGsEnabled);
+
     slmForm->addRow("SLM Width (pixels):", widthSpin);
     slmForm->addRow("SLM Height (pixels):", heightSpin);
     slmForm->addRow("SLM Pixel Size:", pixelSpin);
     slmForm->addRow("SLM Output Mode:", slmOutputModeCombo);
+    slmForm->addRow("Auto-run GS:", autoRunGsCheck);
     slmGroup->setLayout(slmForm);
 
     // --- 2. CAMERA SETTINGS ---
@@ -101,3 +109,6 @@ double SettingsDialog::getFocalLength() const { return focalSpin->value(); }
 
 // SLM Output Getter
 int SettingsDialog::getSlmOutputMode() const { return slmOutputModeCombo->currentIndex(); }
+
+// Algorithm behavior getters
+bool SettingsDialog::getAutoRunGsEnabled() const { return autoRunGsCheck->isChecked(); }

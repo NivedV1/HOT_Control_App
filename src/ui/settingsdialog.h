@@ -6,12 +6,16 @@
 #include <QDoubleSpinBox>
 #include <QComboBox>
 
+class QCheckBox;
+
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
     SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                    int camW, int camH, double camPix,
-                   double wave, double focal, int slmOutputMode, QWidget *parent = nullptr);
+                   double wave, double focal, int slmOutputMode,
+                   bool autoRunGsEnabled,
+                   QWidget *parent = nullptr);
 
     // SLM Getters
     int getWidth() const;
@@ -31,12 +35,16 @@ public:
     // SLM Output Getters
     int getSlmOutputMode() const;
 
+    // Algorithm behavior getters
+    bool getAutoRunGsEnabled() const;
+
 private:
     // SLM
     QSpinBox *widthSpin;
     QSpinBox *heightSpin;
     QDoubleSpinBox *pixelSpin;
     QComboBox *slmOutputModeCombo;
+    QCheckBox *autoRunGsCheck;
 
     // Camera
     QComboBox *cameraBackendCombo;
