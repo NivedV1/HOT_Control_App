@@ -180,10 +180,34 @@ GSResult runGerchbergSaxton(const GSConfig &config,
     }
 
     QVector<double> slmPhase(pixelCount, 0.0);
-    std::mt19937_64 rng(std::random_device{}());
-    std::uniform_real_distribution<double> phaseDist(-kPi, kPi);
-    for (int i = 0; i < pixelCount; ++i) {
-        slmPhase[i] = phaseDist(rng);
+    switch (config.startingPhaseMask) {
+    case GSStartingPhaseMask::RandomPhase: {
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<double> phaseDist(-kPi, kPi);
+        for (int idx = 0; idx < pixelCount; ++idx) {
+            slmPhase[idx] = phaseDist(rng);
+        }
+        break;
+    }
+    case GSStartingPhaseMask::BinaryGrating:
+        for (int y = 0; y < config.slmHeight; ++y) {
+            const int rowBase = y * config.slmWidth;
+            for (int x = 0; x < config.slmWidth; ++x) {
+                const int idx = rowBase + x;
+                slmPhase[idx] = (x % 2 == 0) ? 0.0 : kPi;
+            }
+        }
+        break;
+    case GSStartingPhaseMask::Checkerboard:
+    default:
+        for (int y = 0; y < config.slmHeight; ++y) {
+            const int rowBase = y * config.slmWidth;
+            for (int x = 0; x < config.slmWidth; ++x) {
+                const int idx = rowBase + x;
+                slmPhase[idx] = ((x + y) % 2 == 0) ? 0.0 : kPi;
+            }
+        }
+        break;
     }
 
     cv::Mat slmField(config.slmHeight, config.slmWidth, CV_64FC2);
@@ -261,3 +285,4 @@ GSResult runGerchbergSaxton(const GSConfig &config,
 }
 
 } // namespace GSAlgorithm
+

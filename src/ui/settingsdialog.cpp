@@ -7,16 +7,19 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QtGlobal>
 
 SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                int camW, int camH, double camPix,
                                double wave, double focal, int slmOutputMode,
                                bool autoRunGsEnabled,
+                               bool autoSendSlmEnabled,
+                               int startingPhaseMaskMode,
                                QWidget *parent)
     : QDialog(parent) {
 
     setWindowTitle("Hardware Settings");
-    setMinimumWidth(400);
+    setMinimumWidth(430);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
@@ -36,11 +39,24 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     autoRunGsCheck = new QCheckBox(this);
     autoRunGsCheck->setChecked(autoRunGsEnabled);
 
+    autoSendSlmCheck = new QCheckBox(this);
+    autoSendSlmCheck->setChecked(autoSendSlmEnabled);
+
+    startingPhaseMaskCombo = new QComboBox(this);
+    startingPhaseMaskCombo->addItem("Binary Grating", 1);
+    startingPhaseMaskCombo->addItem("Checkerboard Pattern", 0);
+    startingPhaseMaskCombo->addItem("Random Phase", 2);
+    const int safeMode = qBound(0, startingPhaseMaskMode, 2);
+    const int safeIndex = startingPhaseMaskCombo->findData(safeMode);
+    startingPhaseMaskCombo->setCurrentIndex((safeIndex >= 0) ? safeIndex : 0);
+
     slmForm->addRow("SLM Width (pixels):", widthSpin);
     slmForm->addRow("SLM Height (pixels):", heightSpin);
     slmForm->addRow("SLM Pixel Size:", pixelSpin);
     slmForm->addRow("SLM Output Mode:", slmOutputModeCombo);
     slmForm->addRow("Auto-run GS:", autoRunGsCheck);
+    slmForm->addRow("Auto-send SLM:", autoSendSlmCheck);
+    slmForm->addRow("Starting Phase Mask:", startingPhaseMaskCombo);
     slmGroup->setLayout(slmForm);
 
     // --- 2. CAMERA SETTINGS ---
@@ -112,3 +128,6 @@ int SettingsDialog::getSlmOutputMode() const { return slmOutputModeCombo->curren
 
 // Algorithm behavior getters
 bool SettingsDialog::getAutoRunGsEnabled() const { return autoRunGsCheck->isChecked(); }
+bool SettingsDialog::getAutoSendSlmEnabled() const { return autoSendSlmCheck->isChecked(); }
+int SettingsDialog::getStartingPhaseMaskMode() const { return startingPhaseMaskCombo->currentData().toInt(); }
+

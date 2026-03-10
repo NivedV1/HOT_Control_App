@@ -15,6 +15,8 @@ public:
                    int camW, int camH, double camPix,
                    double wave, double focal, int slmOutputMode,
                    bool autoRunGsEnabled,
+                   bool autoSendSlmEnabled,
+                   int startingPhaseMaskMode,
                    QWidget *parent = nullptr);
 
     // SLM Getters
@@ -37,6 +39,8 @@ public:
 
     // Algorithm behavior getters
     bool getAutoRunGsEnabled() const;
+    bool getAutoSendSlmEnabled() const;
+    int getStartingPhaseMaskMode() const;
 
 private:
     // SLM
@@ -45,6 +49,8 @@ private:
     QDoubleSpinBox *pixelSpin;
     QComboBox *slmOutputModeCombo;
     QCheckBox *autoRunGsCheck;
+    QCheckBox *autoSendSlmCheck;
+    QComboBox *startingPhaseMaskCombo;
 
     // Camera
     QComboBox *cameraBackendCombo;
@@ -58,3 +64,4 @@ private:
 };
 
 #endif // SETTINGSDIALOG_H
+

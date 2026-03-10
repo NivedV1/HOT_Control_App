@@ -177,6 +177,18 @@ QVector<QPointF> generate(const PatternRequest &request) {
         points = samplePolygonEdges(vertices, count);
         return applyShift(points, shiftX, shiftY);
     }
+
+    case Preset::TwoSpots: {
+        const double dist = qMax(0.0, request.distance);
+        const double angleOffset = qDegreesToRadians(request.rotationDeg);
+        
+        points.reserve(2);
+        points.append(QPointF(dist * qCos(angleOffset) + shiftX,
+                              dist * qSin(angleOffset) + shiftY));
+        points.append(QPointF(dist * qCos(angleOffset + (kTau / 2.0)) + shiftX,
+                              dist * qSin(angleOffset + (kTau / 2.0)) + shiftY));
+        return points;
+    }
     }
 
     return points;

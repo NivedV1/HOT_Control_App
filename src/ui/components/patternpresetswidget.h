@@ -34,7 +34,8 @@ private:
         TriangleIndex,
         SquareIndex,
         RectangleIndex,
-        HexagonIndex
+        HexagonIndex,
+        TwoSpotsIndex
     };
 
     QWidget *createCirclePage();
@@ -42,6 +43,7 @@ private:
     QWidget *createSquarePage();
     QWidget *createRectanglePage();
     QWidget *createHexagonPage();
+    QWidget *createTwoSpotsPage();
 
     void updateLimits();
     QString presetName(int index) const;
@@ -84,6 +86,11 @@ private:
     QDoubleSpinBox *hexRotationSpin;
     QDoubleSpinBox *hexXShiftSpin;
     QDoubleSpinBox *hexYShiftSpin;
+
+    QDoubleSpinBox *twoSpotsDistanceSpin;
+    QDoubleSpinBox *twoSpotsRotationSpin;
+    QDoubleSpinBox *twoSpotsXShiftSpin;
+    QDoubleSpinBox *twoSpotsYShiftSpin;
 };
 
 #endif // PATTERNPRESETSWIDGET_H

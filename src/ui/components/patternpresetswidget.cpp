@@ -48,7 +48,11 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
       hexPointsSpin(nullptr),
       hexRotationSpin(nullptr),
       hexXShiftSpin(nullptr),
-      hexYShiftSpin(nullptr) {
+      hexYShiftSpin(nullptr),
+      twoSpotsDistanceSpin(nullptr),
+      twoSpotsRotationSpin(nullptr),
+      twoSpotsXShiftSpin(nullptr),
+      twoSpotsYShiftSpin(nullptr) {
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
@@ -59,7 +63,7 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
     QHBoxLayout *presetRow = new QHBoxLayout();
     QLabel *presetLabel = new QLabel("Preset:");
     presetCombo = new QComboBox();
-    presetCombo->addItems({"Circle", "Triangle", "Square", "Rectangle", "Hexagon"});
+    presetCombo->addItems({"Circle", "Triangle", "Square", "Rectangle", "Hexagon", "Two Spots"});
     presetRow->addWidget(presetLabel);
     presetRow->addWidget(presetCombo, 1);
 
@@ -69,6 +73,7 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
     optionsStack->addWidget(createSquarePage());
     optionsStack->addWidget(createRectanglePage());
     optionsStack->addWidget(createHexagonPage());
+    optionsStack->addWidget(createTwoSpotsPage());
 
     generateBtn = new QPushButton("Generate");
 
@@ -143,13 +148,22 @@ void PatternPresetsWidget::onGenerateClicked() {
         break;
 
     case HexagonIndex:
-    default:
         request.preset = PatternGenerator::Preset::Hexagon;
         request.radius = hexRadiusSpin->value();
         request.pointCount = hexPointsSpin->value();
         request.rotationDeg = hexRotationSpin->value();
         request.xShift = hexXShiftSpin->value();
         request.yShift = hexYShiftSpin->value();
+        break;
+
+    case TwoSpotsIndex:
+    default:
+        request.preset = PatternGenerator::Preset::TwoSpots;
+        request.distance = twoSpotsDistanceSpin->value();
+        request.pointCount = 2;
+        request.rotationDeg = twoSpotsRotationSpin->value();
+        request.xShift = twoSpotsXShiftSpin->value();
+        request.yShift = twoSpotsYShiftSpin->value();
         break;
     }
 
@@ -356,6 +370,36 @@ QWidget *PatternPresetsWidget::createHexagonPage() {
     return group;
 }
 
+QWidget *PatternPresetsWidget::createTwoSpotsPage() {
+    QGroupBox *group = new QGroupBox("Two Spots");
+    QFormLayout *form = new QFormLayout(group);
+
+    twoSpotsDistanceSpin = new QDoubleSpinBox();
+    twoSpotsDistanceSpin->setDecimals(1);
+    twoSpotsDistanceSpin->setSingleStep(1.0);
+    twoSpotsDistanceSpin->setValue(100.0);
+
+    twoSpotsRotationSpin = new QDoubleSpinBox();
+    twoSpotsRotationSpin->setRange(-360.0, 360.0);
+    twoSpotsRotationSpin->setDecimals(1);
+    twoSpotsRotationSpin->setSingleStep(1.0);
+
+    twoSpotsXShiftSpin = new QDoubleSpinBox();
+    twoSpotsXShiftSpin->setDecimals(1);
+    twoSpotsXShiftSpin->setSingleStep(1.0);
+
+    twoSpotsYShiftSpin = new QDoubleSpinBox();
+    twoSpotsYShiftSpin->setDecimals(1);
+    twoSpotsYShiftSpin->setSingleStep(1.0);
+
+    form->addRow("Distance from center:", twoSpotsDistanceSpin);
+    form->addRow("Rotation (deg):", twoSpotsRotationSpin);
+    form->addRow("Center X shift:", twoSpotsXShiftSpin);
+    form->addRow("Center Y shift:", twoSpotsYShiftSpin);
+
+    return group;
+}
+
 void PatternPresetsWidget::updateLimits() {
     const double halfWidth = static_cast<double>(cameraWidth) / 2.0;
     const double halfHeight = static_cast<double>(cameraHeight) / 2.0;
@@ -365,6 +409,7 @@ void PatternPresetsWidget::updateLimits() {
     circleRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
     triangleScaleSpin->setRange(1.0, qMax(1.0, maxRadius));
     hexRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
+    twoSpotsDistanceSpin->setRange(1.0, qMax(1.0, maxRadius));
 
     squareSizeSpin->setRange(1.0, qMax(1.0, minDimension));
     rectWidthSpin->setRange(1.0, qMax(1.0, static_cast<double>(cameraWidth)));
@@ -380,6 +425,7 @@ void PatternPresetsWidget::updateLimits() {
     applyShiftRange(squareXShiftSpin, squareYShiftSpin);
     applyShiftRange(rectXShiftSpin, rectYShiftSpin);
     applyShiftRange(hexXShiftSpin, hexYShiftSpin);
+    applyShiftRange(twoSpotsXShiftSpin, twoSpotsYShiftSpin);
 
     if (circleRadiusSpin->value() > maxRadius) {
         circleRadiusSpin->setValue(maxRadius);
@@ -389,6 +435,9 @@ void PatternPresetsWidget::updateLimits() {
     }
     if (hexRadiusSpin->value() > maxRadius) {
         hexRadiusSpin->setValue(maxRadius);
+    }
+    if (twoSpotsDistanceSpin->value() > maxRadius) {
+        twoSpotsDistanceSpin->setValue(maxRadius);
     }
     if (squareSizeSpin->value() > minDimension) {
         squareSizeSpin->setValue(minDimension);
@@ -413,6 +462,8 @@ QString PatternPresetsWidget::presetName(int index) const {
         return "Rectangle";
     case HexagonIndex:
         return "Hexagon";
+    case TwoSpotsIndex:
+        return "Two Spots";
     default:
         return "Pattern";
     }

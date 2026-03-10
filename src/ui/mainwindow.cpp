@@ -72,6 +72,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
     fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
     autoRunGsEnabled = settings.value("Hardware/AutoRunGS", false).toBool();
+    autoSendSlmEnabled = settings.value("Hardware/AutoSendSLM", false).toBool();
+    gsStartingPhaseMaskMode = settings.value("Hardware/GS_StartingPhaseMask", 0).toInt();
 
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
     slmOutputMode = settings.value("Hardware/SLM_OutputMode", DllOutputMode).toInt();
@@ -483,7 +485,7 @@ void MainWindow::setupConnections() {
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
-                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, this);
+                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled, gsStartingPhaseMaskMode, this);
 
     if (dialog.exec() == QDialog::Accepted) {
         const int prevSlmWidth = slmWidth;
@@ -514,10 +516,14 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Optical/Wavelength", laserWavelength);
         slmOutputMode = dialog.getSlmOutputMode();
         autoRunGsEnabled = dialog.getAutoRunGsEnabled();
+        autoSendSlmEnabled = dialog.getAutoSendSlmEnabled();
+        gsStartingPhaseMaskMode = dialog.getStartingPhaseMaskMode();
 
         settings.setValue("Optical/FocalLength", fourierFocalLength);
         settings.setValue("Hardware/SLM_OutputMode", slmOutputMode);
         settings.setValue("Hardware/AutoRunGS", autoRunGsEnabled);
+        settings.setValue("Hardware/AutoSendSLM", autoSendSlmEnabled);
+        settings.setValue("Hardware/GS_StartingPhaseMask", gsStartingPhaseMaskMode);
         settings.sync();
 
         if (!autoRunGsEnabled && gsAutoRunTimer) {
@@ -666,6 +672,17 @@ void MainWindow::scheduleGsAutoRun() {
     gsAutoRunTimer->start();
 }
 
+void MainWindow::autoSendToSlmIfEnabled() {
+    if (!autoSendSlmEnabled) {
+        return;
+    }
+
+    if (currentMask.isNull() && correctionMask.isNull()) {
+        return;
+    }
+
+    sendToSLM();
+}
 void MainWindow::onGsAutoRunTimeout() {
     if (!autoRunGsEnabled || !isGerchbergSaxtonSelected()) {
         return;
@@ -717,7 +734,18 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings) {
     config.wavelengthNm = laserWavelength;
     config.focalLengthMm = fourierFocalLength;
     config.iterations = iterationsSpin ? iterationsSpin->value() : 20;
-
+    switch (gsStartingPhaseMaskMode) {
+    case 1:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
+        break;
+    case 2:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::RandomPhase;
+        break;
+    case 0:
+    default:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::Checkerboard;
+        break;
+    }
     const GSAlgorithm::GSResult result = GSAlgorithm::runGerchbergSaxton(config, sourceAmplitude, targets);
     if (!result.success) {
         if (showWarnings) {
@@ -743,12 +771,17 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings) {
                                  .arg(sourceMsg),
                              4000);
 
+    autoSendToSlmIfEnabled();
     return true;
 }
 
 void MainWindow::onSendToSlmRequested() {
     if (isGerchbergSaxtonSelected() && !gridPointData.isEmpty()) {
         if (!generateAlgorithmMask(true)) {
+            return;
+        }
+
+        if (autoSendSlmEnabled) {
             return;
         }
     }
@@ -758,7 +791,7 @@ void MainWindow::onSendToSlmRequested() {
 void MainWindow::savePhaseMask() {
     // construct the image we actually want to write rather than relying on the scaled
     // widget pixmap (which may be resized to fit the label)
-    QImage saveImg = composeFullResolutionMask();
+    QImage saveImg = composeFullResolutionMask(previewCorrectionCb->isChecked());
     if (saveImg.isNull()) {
         QMessageBox::warning(this, "No Mask Found", "There is no phase mask or correction loaded to save.");
         return;
@@ -1201,7 +1234,7 @@ void MainWindow::tryAutoApplySavedCorrection() {
 // Combine the currently loaded hologram and correction into a single full-resolution
 // image.  Performs identical modulo-256 addition used in sendToSLM()/updatePhasePreview.
 // Returns a null QImage if nothing is available.
-QImage MainWindow::composeFullResolutionMask() const {
+QImage MainWindow::composeFullResolutionMask(bool applyCorrection) const {
     // start with hologram or flat canvas
     QImage result;
     if (currentMask.isNull()) {
@@ -1215,7 +1248,7 @@ QImage MainWindow::composeFullResolutionMask() const {
         result = currentMask.copy();
     }
 
-    if (!correctionMask.isNull()) {
+    if (applyCorrection && !correctionMask.isNull()) {
         if (correctionMask.size() == result.size()) {
             for (int y = 0; y < result.height(); ++y) {
                 uchar *rRow = result.scanLine(y);
@@ -1262,13 +1295,14 @@ void MainWindow::updatePhasePreview() {
 
 void MainWindow::receiveHologram(const QImage &mask) {
     currentMask = mask.convertToFormat(QImage::Format_Grayscale8);
-    
+
     // Resize to SLM dimensions if needed
     if (currentMask.size() != QSize(slmWidth, slmHeight)) {
         currentMask = currentMask.scaled(slmWidth, slmHeight);
     }
-    
+
     updatePhasePreview();
+    autoSendToSlmIfEnabled();
     statusBar()->showMessage("Generated Hologram loaded successfully (resized to " + QString::number(slmWidth) + "x" + QString::number(slmHeight) + ").", 5000);
 }
 
@@ -1294,22 +1328,23 @@ void MainWindow::loadPhasePattern() {
     QString fileName = QFileDialog::getOpenFileName(this, "Select Phase Mask", "", "Images (*.png *.bmp *.jpg)");
     if (!fileName.isEmpty()) {
         QImage loadedImage = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
-        
+
         // Check and warn about size mismatch
         if (loadedImage.size() != QSize(slmWidth, slmHeight)) {
             QString origSize = QString::number(loadedImage.width()) + "x" + QString::number(loadedImage.height());
             QString targetSize = QString::number(slmWidth) + "x" + QString::number(slmHeight);
-            int ret = QMessageBox::warning(this, "Size Mismatch", 
+            int ret = QMessageBox::warning(this, "Size Mismatch",
                 "Phase mask size (" + origSize + ") does not match SLM resolution (" + targetSize + ").\n\nResize to SLM dimensions?",
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
-            
+
             if (ret == QMessageBox::Yes) {
                 loadedImage = loadedImage.scaled(slmWidth, slmHeight);
             }
         }
-        
+
         currentMask = loadedImage;
         updatePhasePreview();
+        autoSendToSlmIfEnabled();
         statusBar()->showMessage("Mask loaded: " + fileName, 3000);
     }
 }
@@ -1341,9 +1376,9 @@ void MainWindow::loadCorrectionFile() {
 
         persistCorrectionPath(QFileInfo(fileName).absoluteFilePath());
 
-        statusBar()->showMessage("Correction Mask loaded. Automatically sending to SLM...", 5000);
         updatePhasePreview();
-        sendToSLM();
+        autoSendToSlmIfEnabled();
+        statusBar()->showMessage("Correction Mask loaded.", 5000);
     }
 }
 
@@ -1353,6 +1388,8 @@ void MainWindow::clearCorrectionMask() {
         return;
     }
 
+    const bool hadTargetMask = !currentMask.isNull();
+
     correctionMask = QImage();
     persistCorrectionPath(QString());
 
@@ -1360,24 +1397,34 @@ void MainWindow::clearCorrectionMask() {
     previewCorrectionCb->setEnabled(false);
     updatePhasePreview();
 
-    if (!currentMask.isNull()) {
-        sendToSLM();
-        statusBar()->showMessage("SLM correction removed. Target mask remains active.", 5000);
+    if (hadTargetMask) {
+        autoSendToSlmIfEnabled();
+        if (autoSendSlmEnabled) {
+            statusBar()->showMessage("SLM correction removed. Target mask remains active.", 5000);
+        } else {
+            statusBar()->showMessage("SLM correction removed. Click Send to SLM to apply.", 5000);
+        }
         return;
     }
 
-    if (slmOutputMode == DirectScreenOutputMode) {
-        clearDirectOutput();
-    } else if (slmLibrary.isLoaded()) {
-        auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
-        if (winTerm) {
-            winTerm(slmWindowID);
+    if (autoSendSlmEnabled) {
+        if (slmOutputMode == DirectScreenOutputMode) {
+            clearDirectOutput();
+        } else if (slmLibrary.isLoaded()) {
+            auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
+            if (winTerm) {
+                winTerm(slmWindowID);
+            }
         }
+
+        phaseMaskLabel->clear();
+        phaseMaskLabel->setText("SLM Offline");
     }
 
-    phaseMaskLabel->clear();
-    phaseMaskLabel->setText("SLM Offline");
-    statusBar()->showMessage("SLM correction removed.", 5000);
+    statusBar()->showMessage(autoSendSlmEnabled
+                                 ? "SLM correction removed."
+                                 : "SLM correction removed locally. Click Send to SLM to apply.",
+                             5000);
 }
 
 void MainWindow::sendToSLM() {

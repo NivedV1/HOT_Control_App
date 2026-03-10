@@ -111,7 +111,7 @@ private:
     void replaceGridWithPoints(const QVector<QPointF> &points);
 
     void updatePhasePreview();
-    QImage composeFullResolutionMask() const;
+    QImage composeFullResolutionMask(bool applyCorrection = true) const;
     QString configPath() const;
     bool isSelectedMonitorAvailable() const;
     QScreen *selectedScreen() const;
@@ -124,6 +124,7 @@ private:
 
     void updateAlgorithmSettingsUi();
     void scheduleGsAutoRun();
+    void autoSendToSlmIfEnabled();
     bool generateAlgorithmMask(bool showWarnings);
     QVector<float> defaultGsSourceAmplitude() const;
     bool isGerchbergSaxtonSelected() const;
@@ -184,6 +185,8 @@ private:
     double fourierFocalLength = 100.0;
     bool isDarkMode = true;
     bool autoRunGsEnabled = false;
+    bool autoSendSlmEnabled = false;
+    int gsStartingPhaseMaskMode = 0;
 
     // SLM Pointers & State
     QPushButton *loadPhaseBtn;
@@ -219,3 +222,4 @@ private:
 };
 
 #endif // MAINWINDOW_H
+

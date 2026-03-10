@@ -7,6 +7,12 @@
 
 namespace GSAlgorithm {
 
+enum class GSStartingPhaseMask {
+    Checkerboard = 0,
+    BinaryGrating = 1,
+    RandomPhase = 2
+};
+
 struct GSTargetPoint {
     // Camera-centered coordinates: (0, 0) is center, +x is right, +y is up.
     double xCamPx = 0.0;
@@ -26,6 +32,7 @@ struct GSConfig {
     double focalLengthMm = 0.0;
 
     int iterations = 20;
+    GSStartingPhaseMask startingPhaseMask = GSStartingPhaseMask::Checkerboard;
 };
 
 struct GSResult {
@@ -50,3 +57,4 @@ GSResult runGerchbergSaxton(const GSConfig &config,
 } // namespace GSAlgorithm
 
 #endif // GS_ALGORITHM_H
+

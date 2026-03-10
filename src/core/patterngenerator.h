@@ -11,7 +11,8 @@ enum class Preset {
     Triangle,
     Square,
     Rectangle,
-    Hexagon
+    Hexagon,
+    TwoSpots
 };
 
 struct PatternRequest {
@@ -26,6 +27,7 @@ struct PatternRequest {
     double size = 100.0;
     double width = 120.0;
     double height = 80.0;
+    double distance = 100.0;
 };
 
 QVector<QPointF> generate(const PatternRequest &request);
