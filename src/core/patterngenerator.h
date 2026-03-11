@@ -14,7 +14,8 @@ enum class Preset {
     Hexagon,
     TwoSpots,
     Star,
-    PlanetAndMoon
+    PlanetAndMoon,
+    Grid
 };
 
 struct PatternRequest {
@@ -37,6 +38,13 @@ struct PatternRequest {
     
     // Planet and Moon specific
     double moonRadius = 20.0;
+    
+    // Grid specific
+    int gridRows = 5;
+    int gridCols = 5;
+    double gridRowSpacing = 20.0;
+    double gridColSpacing = 20.0;
+    bool centerGridAtOrigin = true;
 };
 
 QVector<QPointF> generate(const PatternRequest &request);

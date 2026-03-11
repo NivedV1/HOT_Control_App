@@ -66,7 +66,15 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
       pmTotalPointsSpin(nullptr),
       pmRotationSpin(nullptr),
       pmXShiftSpin(nullptr),
-      pmYShiftSpin(nullptr) {
+      pmYShiftSpin(nullptr),
+      gridRowsSpin(nullptr),
+      gridColsSpin(nullptr),
+      gridRowSpacingSpin(nullptr),
+      gridColSpacingSpin(nullptr),
+      gridCenterCheck(nullptr),
+      gridRotationSpin(nullptr),
+      gridXShiftSpin(nullptr),
+      gridYShiftSpin(nullptr) {
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
@@ -77,7 +85,7 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
     QHBoxLayout *presetRow = new QHBoxLayout();
     QLabel *presetLabel = new QLabel("Preset:");
     presetCombo = new QComboBox();
-    presetCombo->addItems({"Circle", "Triangle", "Square", "Rectangle", "Hexagon", "Two Spots", "Star", "Planet & Moon"});
+    presetCombo->addItems({"Circle", "Triangle", "Square", "Rectangle", "Hexagon", "Two Spots", "Star", "Planet & Moon", "N*M Grid"});
     presetRow->addWidget(presetLabel);
     presetRow->addWidget(presetCombo, 1);
 
@@ -90,6 +98,7 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
     optionsStack->addWidget(createTwoSpotsPage());
     optionsStack->addWidget(createStarPage());
     optionsStack->addWidget(createPlanetMoonPage());
+    optionsStack->addWidget(createGridPage());
 
     generateBtn = new QPushButton("Generate");
 
@@ -193,7 +202,6 @@ void PatternPresetsWidget::onGenerateClicked() {
         break;
 
     case PlanetAndMoonIndex:
-    default:
         request.preset = PatternGenerator::Preset::PlanetAndMoon;
         request.radius = pmPlanetRadiusSpin->value();
         request.moonRadius = pmMoonRadiusSpin->value();
@@ -202,6 +210,21 @@ void PatternPresetsWidget::onGenerateClicked() {
         request.rotationDeg = pmRotationSpin->value();
         request.xShift = pmXShiftSpin->value();
         request.yShift = pmYShiftSpin->value();
+        break;
+
+    case GridIndex:
+    default:
+        request.preset = PatternGenerator::Preset::Grid;
+        request.gridRows = gridRowsSpin->value();
+        request.gridCols = gridColsSpin->value();
+        request.gridRowSpacing = gridRowSpacingSpin->value();
+        request.gridColSpacing = gridColSpacingSpin->value();
+        request.centerGridAtOrigin = gridCenterCheck->isChecked();
+        request.rotationDeg = gridRotationSpin->value();
+        request.xShift = gridXShiftSpin->value();
+        request.yShift = gridYShiftSpin->value();
+        // Point count is determined automatically by Rows * Cols, but the summary uses request.pointCount if you want to set it, or points.size()
+        request.pointCount = request.gridRows * request.gridCols;
         break;
     }
 
@@ -531,6 +554,56 @@ QWidget *PatternPresetsWidget::createPlanetMoonPage() {
     return group;
 }
 
+QWidget *PatternPresetsWidget::createGridPage() {
+    QGroupBox *group = new QGroupBox("N*M Grid");
+    QFormLayout *form = new QFormLayout(group);
+
+    gridRowsSpin = new QSpinBox();
+    gridRowsSpin->setRange(1, 100);
+    gridRowsSpin->setValue(5);
+
+    gridColsSpin = new QSpinBox();
+    gridColsSpin->setRange(1, 100);
+    gridColsSpin->setValue(5);
+
+    gridRowSpacingSpin = new QDoubleSpinBox();
+    gridRowSpacingSpin->setDecimals(1);
+    gridRowSpacingSpin->setSingleStep(1.0);
+    gridRowSpacingSpin->setValue(20.0);
+
+    gridColSpacingSpin = new QDoubleSpinBox();
+    gridColSpacingSpin->setDecimals(1);
+    gridColSpacingSpin->setSingleStep(1.0);
+    gridColSpacingSpin->setValue(20.0);
+
+    gridCenterCheck = new QCheckBox("Center grid around origin");
+    gridCenterCheck->setChecked(true);
+
+    gridRotationSpin = new QDoubleSpinBox();
+    gridRotationSpin->setRange(-360.0, 360.0);
+    gridRotationSpin->setDecimals(1);
+    gridRotationSpin->setSingleStep(1.0);
+
+    gridXShiftSpin = new QDoubleSpinBox();
+    gridXShiftSpin->setDecimals(1);
+    gridXShiftSpin->setSingleStep(1.0);
+
+    gridYShiftSpin = new QDoubleSpinBox();
+    gridYShiftSpin->setDecimals(1);
+    gridYShiftSpin->setSingleStep(1.0);
+
+    form->addRow("Rows (N):", gridRowsSpin);
+    form->addRow("Cols (M):", gridColsSpin);
+    form->addRow("Row Spacing (Y px):", gridRowSpacingSpin);
+    form->addRow("Col Spacing (X px):", gridColSpacingSpin);
+    form->addRow("Alignment:", gridCenterCheck);
+    form->addRow("Rotation (deg):", gridRotationSpin);
+    form->addRow("X shift:", gridXShiftSpin);
+    form->addRow("Y shift:", gridYShiftSpin);
+
+    return group;
+}
+
 void PatternPresetsWidget::updateLimits() {
     const double halfWidth = static_cast<double>(cameraWidth) / 2.0;
     const double halfHeight = static_cast<double>(cameraHeight) / 2.0;
@@ -546,6 +619,10 @@ void PatternPresetsWidget::updateLimits() {
     pmPlanetRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
     pmMoonRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
     pmDistanceSpin->setRange(1.0, qMax(1.0, maxRadius));
+
+    // For row/col spacing, it's possible to want very small spacing
+    gridRowSpacingSpin->setRange(0.1, qMax(1.0, static_cast<double>(cameraHeight)));
+    gridColSpacingSpin->setRange(0.1, qMax(1.0, static_cast<double>(cameraWidth)));
 
     squareSizeSpin->setRange(1.0, qMax(1.0, minDimension));
     rectWidthSpin->setRange(1.0, qMax(1.0, static_cast<double>(cameraWidth)));
@@ -564,6 +641,7 @@ void PatternPresetsWidget::updateLimits() {
     applyShiftRange(twoSpotsXShiftSpin, twoSpotsYShiftSpin);
     applyShiftRange(starXShiftSpin, starYShiftSpin);
     applyShiftRange(pmXShiftSpin, pmYShiftSpin);
+    applyShiftRange(gridXShiftSpin, gridYShiftSpin);
 
     if (circleRadiusSpin->value() > maxRadius) {
         circleRadiusSpin->setValue(maxRadius);
@@ -621,6 +699,8 @@ QString PatternPresetsWidget::presetName(int index) const {
         return "Star";
     case PlanetAndMoonIndex:
         return "Planet & Moon";
+    case GridIndex:
+        return "N*M Grid";
     default:
         return "Pattern";
     }

@@ -254,6 +254,36 @@ QVector<QPointF> generate(const PatternRequest &request) {
         
         return points;
     }
+    
+    case Preset::Grid: {
+        const int rows = qMax(1, request.gridRows);
+        const int cols = qMax(1, request.gridCols);
+        const double rowSpacing = request.gridRowSpacing;
+        const double colSpacing = request.gridColSpacing;
+        const double angleOffset = qDegreesToRadians(request.rotationDeg);
+        
+        // Calculate the bounding box of the grid to center it.
+        const double gridWidth = (cols - 1) * colSpacing;
+        const double gridHeight = (rows - 1) * rowSpacing;
+        const double startX = request.centerGridAtOrigin ? (-gridWidth / 2.0) : 0.0;
+        const double startY = request.centerGridAtOrigin ? (-gridHeight / 2.0) : 0.0;
+        
+        points.reserve(rows * cols);
+        
+        for (int r = 0; r < rows; ++r) {
+            for (int c = 0; c < cols; ++c) {
+                const double x = startX + (c * colSpacing);
+                const double y = startY + (r * rowSpacing);
+                
+                // Rotated coordinates + shift
+                const double rotX = x * qCos(angleOffset) - y * qSin(angleOffset);
+                const double rotY = x * qSin(angleOffset) + y * qCos(angleOffset);
+                
+                points.append(QPointF(rotX + shiftX, rotY + shiftY));
+            }
+        }
+        return points;
+    }
     }
 
     return points;
