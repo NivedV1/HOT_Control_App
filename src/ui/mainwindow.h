@@ -81,12 +81,18 @@ private slots:
     void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
     void onGridPointRemoved(int pointId);
     void onGridPointSelected(int pointId);
-    void onPatternGenerated(const QVector<QPointF> &points, const QString &summary);
+    void onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details);
 
 private:
     enum SlmOutputMode {
         DllOutputMode = 0,
         DirectScreenOutputMode = 1
+    };
+
+    enum class GsRunTrigger {
+        ManualButton = 0,
+        AutoRunTimer = 1,
+        SendToSlmPreRun = 2
     };
 
     // Grid enlargement/minimize
@@ -125,7 +131,7 @@ private:
     void updateAlgorithmSettingsUi();
     void scheduleGsAutoRun();
     void autoSendToSlmIfEnabled();
-    bool generateAlgorithmMask(bool showWarnings);
+    bool generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger);
     QVector<float> defaultGsSourceAmplitude() const;
     bool isGerchbergSaxtonSelected() const;
 
@@ -219,7 +225,8 @@ private:
     QMap<int, QPointF> gridPointData;
     int selectedPointId = -1;
     bool suppressGridStatusMessages = false;
+    QString lastGeneratedPatternSummary;
+    QString lastGeneratedPatternDetails;
 };
 
 #endif // MAINWINDOW_H
-

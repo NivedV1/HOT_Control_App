@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(HOT_Control_App VERSION 1.0 LANGUAGES CXX)
 
+option(HOT_ENABLE_TEMP_GS_PROFILING "Enable temporary GS runtime profiling/logging instrumentation" ON)
 # Set C++ standard (C++17 is recommended for modern Qt and scientific computing)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,6 +65,11 @@ set(RESOURCES
 # Create the executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
 
+if (HOT_ENABLE_TEMP_GS_PROFILING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_TEMP_GS_PROFILING=1)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_TEMP_GS_PROFILING=0)
+endif()
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     src/ui
@@ -102,5 +108,3 @@ if (WIN32)
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
     )
 endif()
-
-
