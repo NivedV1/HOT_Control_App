@@ -12,7 +12,9 @@ enum class Preset {
     Square,
     Rectangle,
     Hexagon,
-    TwoSpots
+    TwoSpots,
+    Star,
+    PlanetAndMoon
 };
 
 struct PatternRequest {
@@ -27,7 +29,14 @@ struct PatternRequest {
     double size = 100.0;
     double width = 120.0;
     double height = 80.0;
-    double distance = 100.0;
+    double distance = 50.0;
+    
+    // Star specific
+    double innerRadius = 50.0;
+    int starPoints = 5;
+    
+    // Planet and Moon specific
+    double moonRadius = 20.0;
 };
 
 QVector<QPointF> generate(const PatternRequest &request);

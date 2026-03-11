@@ -80,6 +80,25 @@ QVector<QPointF> makeRegularPolygon(int sides, double radius, double rotationDeg
     return vertices;
 }
 
+QVector<QPointF> makeStarPolygon(int points, double outerRadius, double innerRadius, double rotationDeg) {
+    QVector<QPointF> vertices;
+    if (points < 3 || outerRadius <= 0.0 || innerRadius <= 0.0) {
+        return vertices;
+    }
+    
+    vertices.reserve(points * 2);
+    const double baseRotationRad = qDegreesToRadians(rotationDeg);
+    const double angleStep = kTau / static_cast<double>(points * 2);
+    
+    for (int i = 0; i < points * 2; ++i) {
+        const double angle = (static_cast<double>(i) * angleStep) + baseRotationRad;
+        const double r = (i % 2 == 0) ? outerRadius : innerRadius;
+        vertices.append(QPointF(r * qCos(angle), r * qSin(angle)));
+    }
+    
+    return vertices;
+}
+
 QVector<QPointF> makeRectangleVertices(double width, double height, double rotationDeg) {
     QVector<QPointF> vertices;
     if (width <= 0.0 || height <= 0.0) {
@@ -187,6 +206,52 @@ QVector<QPointF> generate(const PatternRequest &request) {
                               dist * qSin(angleOffset) + shiftY));
         points.append(QPointF(dist * qCos(angleOffset + (kTau / 2.0)) + shiftX,
                               dist * qSin(angleOffset + (kTau / 2.0)) + shiftY));
+        return points;
+    }
+    
+    case Preset::Star: {
+        const int starArms = qMax(3, request.starPoints);
+        const QVector<QPointF> vertices = makeStarPolygon(starArms, request.radius, request.innerRadius, request.rotationDeg);
+        points = samplePolygonEdges(vertices, count);
+        return applyShift(points, shiftX, shiftY);
+    }
+    
+    case Preset::PlanetAndMoon: {
+        // We will sample 'count' points distributed between the planet and the moon based on their circumferences.
+        const double pRad = qMax(0.0, request.radius);
+        const double mRad = qMax(0.0, request.moonRadius);
+        const double dist = qMax(0.0, request.distance);
+        if (pRad <= 0.0 && mRad <= 0.0) return points;
+        
+        const double pCircum = kTau * pRad;
+        const double mCircum = kTau * mRad;
+        const double totalCircum = pCircum + mCircum;
+        
+        int pPoints = qRound((pCircum / totalCircum) * count);
+        int mPoints = count - pPoints;
+        
+        // Ensure at least some points if radius is > 0
+        if (pRad > 0.0 && pPoints == 0 && count > 0) { pPoints = 1; mPoints = count - 1; }
+        if (mRad > 0.0 && mPoints == 0 && count > 0) { mPoints = 1; pPoints = count - 1; }
+        
+        points.reserve(count);
+        
+        // Planet
+        for (int i = 0; i < pPoints; ++i) {
+            const double angle = kTau * static_cast<double>(i) / static_cast<double>(qMax(1, pPoints));
+            points.append(QPointF(pRad * qCos(angle) + shiftX, pRad * qSin(angle) + shiftY));
+        }
+        
+        // Moon (offset by distance and rotated)
+        const double moonAngle = qDegreesToRadians(request.rotationDeg);
+        const double mCenterX = shiftX + dist * qCos(moonAngle);
+        const double mCenterY = shiftY + dist * qSin(moonAngle);
+        
+        for (int i = 0; i < mPoints; ++i) {
+            const double angle = kTau * static_cast<double>(i) / static_cast<double>(qMax(1, mPoints));
+            points.append(QPointF(mCenterX + mRad * qCos(angle), mCenterY + mRad * qSin(angle)));
+        }
+        
         return points;
     }
     }

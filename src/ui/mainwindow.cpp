@@ -107,6 +107,11 @@ MainWindow::~MainWindow() {
     }
 
     clearDirectOutput();
+    if (directOutputWindow) {
+        directOutputWindow->close();
+        delete directOutputWindow;
+        directOutputWindow = nullptr;
+    }
 
     // Safety check: close SLM if app is closed
     if (slmLibrary.isLoaded()) {
@@ -1070,6 +1075,7 @@ void MainWindow::ensureDirectOutputWindow() {
     }
 
     directOutputWindow = new QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    directOutputWindow->setAttribute(Qt::WA_QuitOnClose, false);
     directOutputWindow->setWindowFlag(Qt::BypassWindowManagerHint, true);
     directOutputLabel = new QLabel(directOutputWindow);
     directOutputLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);

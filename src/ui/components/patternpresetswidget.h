@@ -35,7 +35,9 @@ private:
         SquareIndex,
         RectangleIndex,
         HexagonIndex,
-        TwoSpotsIndex
+        TwoSpotsIndex,
+        StarIndex,
+        PlanetAndMoonIndex
     };
 
     QWidget *createCirclePage();
@@ -44,6 +46,8 @@ private:
     QWidget *createRectanglePage();
     QWidget *createHexagonPage();
     QWidget *createTwoSpotsPage();
+    QWidget *createStarPage();
+    QWidget *createPlanetMoonPage();
 
     void updateLimits();
     QString presetName(int index) const;
@@ -91,6 +95,22 @@ private:
     QDoubleSpinBox *twoSpotsRotationSpin;
     QDoubleSpinBox *twoSpotsXShiftSpin;
     QDoubleSpinBox *twoSpotsYShiftSpin;
+
+    QSpinBox *starPointsSpin;
+    QDoubleSpinBox *starOuterRadiusSpin;
+    QDoubleSpinBox *starInnerRadiusSpin;
+    QSpinBox *starTotalPointsSpin;
+    QDoubleSpinBox *starRotationSpin;
+    QDoubleSpinBox *starXShiftSpin;
+    QDoubleSpinBox *starYShiftSpin;
+
+    QDoubleSpinBox *pmPlanetRadiusSpin;
+    QDoubleSpinBox *pmMoonRadiusSpin;
+    QDoubleSpinBox *pmDistanceSpin;
+    QSpinBox *pmTotalPointsSpin;
+    QDoubleSpinBox *pmRotationSpin;
+    QDoubleSpinBox *pmXShiftSpin;
+    QDoubleSpinBox *pmYShiftSpin;
 };
 
 #endif // PATTERNPRESETSWIDGET_H

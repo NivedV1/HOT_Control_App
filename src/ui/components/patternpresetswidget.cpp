@@ -52,7 +52,21 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
       twoSpotsDistanceSpin(nullptr),
       twoSpotsRotationSpin(nullptr),
       twoSpotsXShiftSpin(nullptr),
-      twoSpotsYShiftSpin(nullptr) {
+      twoSpotsYShiftSpin(nullptr),
+      starPointsSpin(nullptr),
+      starOuterRadiusSpin(nullptr),
+      starInnerRadiusSpin(nullptr),
+      starTotalPointsSpin(nullptr),
+      starRotationSpin(nullptr),
+      starXShiftSpin(nullptr),
+      starYShiftSpin(nullptr),
+      pmPlanetRadiusSpin(nullptr),
+      pmMoonRadiusSpin(nullptr),
+      pmDistanceSpin(nullptr),
+      pmTotalPointsSpin(nullptr),
+      pmRotationSpin(nullptr),
+      pmXShiftSpin(nullptr),
+      pmYShiftSpin(nullptr) {
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
@@ -63,7 +77,7 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
     QHBoxLayout *presetRow = new QHBoxLayout();
     QLabel *presetLabel = new QLabel("Preset:");
     presetCombo = new QComboBox();
-    presetCombo->addItems({"Circle", "Triangle", "Square", "Rectangle", "Hexagon", "Two Spots"});
+    presetCombo->addItems({"Circle", "Triangle", "Square", "Rectangle", "Hexagon", "Two Spots", "Star", "Planet & Moon"});
     presetRow->addWidget(presetLabel);
     presetRow->addWidget(presetCombo, 1);
 
@@ -74,6 +88,8 @@ PatternPresetsWidget::PatternPresetsWidget(int cameraWidth, int cameraHeight, QW
     optionsStack->addWidget(createRectanglePage());
     optionsStack->addWidget(createHexagonPage());
     optionsStack->addWidget(createTwoSpotsPage());
+    optionsStack->addWidget(createStarPage());
+    optionsStack->addWidget(createPlanetMoonPage());
 
     generateBtn = new QPushButton("Generate");
 
@@ -157,13 +173,35 @@ void PatternPresetsWidget::onGenerateClicked() {
         break;
 
     case TwoSpotsIndex:
-    default:
         request.preset = PatternGenerator::Preset::TwoSpots;
         request.distance = twoSpotsDistanceSpin->value();
         request.pointCount = 2;
         request.rotationDeg = twoSpotsRotationSpin->value();
         request.xShift = twoSpotsXShiftSpin->value();
         request.yShift = twoSpotsYShiftSpin->value();
+        break;
+
+    case StarIndex:
+        request.preset = PatternGenerator::Preset::Star;
+        request.starPoints = starPointsSpin->value();
+        request.radius = starOuterRadiusSpin->value();
+        request.innerRadius = starInnerRadiusSpin->value();
+        request.pointCount = starTotalPointsSpin->value();
+        request.rotationDeg = starRotationSpin->value();
+        request.xShift = starXShiftSpin->value();
+        request.yShift = starYShiftSpin->value();
+        break;
+
+    case PlanetAndMoonIndex:
+    default:
+        request.preset = PatternGenerator::Preset::PlanetAndMoon;
+        request.radius = pmPlanetRadiusSpin->value();
+        request.moonRadius = pmMoonRadiusSpin->value();
+        request.distance = pmDistanceSpin->value();
+        request.pointCount = pmTotalPointsSpin->value();
+        request.rotationDeg = pmRotationSpin->value();
+        request.xShift = pmXShiftSpin->value();
+        request.yShift = pmYShiftSpin->value();
         break;
     }
 
@@ -400,6 +438,99 @@ QWidget *PatternPresetsWidget::createTwoSpotsPage() {
     return group;
 }
 
+QWidget *PatternPresetsWidget::createStarPage() {
+    QGroupBox *group = new QGroupBox("Star");
+    QFormLayout *form = new QFormLayout(group);
+
+    starPointsSpin = new QSpinBox();
+    starPointsSpin->setRange(3, 100);
+    starPointsSpin->setValue(5);
+
+    starOuterRadiusSpin = new QDoubleSpinBox();
+    starOuterRadiusSpin->setDecimals(1);
+    starOuterRadiusSpin->setSingleStep(1.0);
+    starOuterRadiusSpin->setValue(120.0);
+
+    starInnerRadiusSpin = new QDoubleSpinBox();
+    starInnerRadiusSpin->setDecimals(1);
+    starInnerRadiusSpin->setSingleStep(1.0);
+    starInnerRadiusSpin->setValue(50.0);
+
+    starTotalPointsSpin = new QSpinBox();
+    starTotalPointsSpin->setRange(6, 2000);
+    starTotalPointsSpin->setValue(50);
+
+    starRotationSpin = new QDoubleSpinBox();
+    starRotationSpin->setRange(-360.0, 360.0);
+    starRotationSpin->setDecimals(1);
+    starRotationSpin->setSingleStep(1.0);
+
+    starXShiftSpin = new QDoubleSpinBox();
+    starXShiftSpin->setDecimals(1);
+    starXShiftSpin->setSingleStep(1.0);
+
+    starYShiftSpin = new QDoubleSpinBox();
+    starYShiftSpin->setDecimals(1);
+    starYShiftSpin->setSingleStep(1.0);
+
+    form->addRow("Points (Arms):", starPointsSpin);
+    form->addRow("Outer radius:", starOuterRadiusSpin);
+    form->addRow("Inner radius:", starInnerRadiusSpin);
+    form->addRow("Total sampled points:", starTotalPointsSpin);
+    form->addRow("Rotation (deg):", starRotationSpin);
+    form->addRow("X shift:", starXShiftSpin);
+    form->addRow("Y shift:", starYShiftSpin);
+
+    return group;
+}
+
+QWidget *PatternPresetsWidget::createPlanetMoonPage() {
+    QGroupBox *group = new QGroupBox("Planet & Moon");
+    QFormLayout *form = new QFormLayout(group);
+
+    pmPlanetRadiusSpin = new QDoubleSpinBox();
+    pmPlanetRadiusSpin->setDecimals(1);
+    pmPlanetRadiusSpin->setSingleStep(1.0);
+    pmPlanetRadiusSpin->setValue(80.0);
+
+    pmMoonRadiusSpin = new QDoubleSpinBox();
+    pmMoonRadiusSpin->setDecimals(1);
+    pmMoonRadiusSpin->setSingleStep(1.0);
+    pmMoonRadiusSpin->setValue(20.0);
+
+    pmDistanceSpin = new QDoubleSpinBox();
+    pmDistanceSpin->setDecimals(1);
+    pmDistanceSpin->setSingleStep(1.0);
+    pmDistanceSpin->setValue(140.0);
+
+    pmTotalPointsSpin = new QSpinBox();
+    pmTotalPointsSpin->setRange(4, 2000);
+    pmTotalPointsSpin->setValue(60);
+
+    pmRotationSpin = new QDoubleSpinBox();
+    pmRotationSpin->setRange(-360.0, 360.0);
+    pmRotationSpin->setDecimals(1);
+    pmRotationSpin->setSingleStep(1.0);
+
+    pmXShiftSpin = new QDoubleSpinBox();
+    pmXShiftSpin->setDecimals(1);
+    pmXShiftSpin->setSingleStep(1.0);
+
+    pmYShiftSpin = new QDoubleSpinBox();
+    pmYShiftSpin->setDecimals(1);
+    pmYShiftSpin->setSingleStep(1.0);
+
+    form->addRow("Planet radius:", pmPlanetRadiusSpin);
+    form->addRow("Moon radius:", pmMoonRadiusSpin);
+    form->addRow("Moon distance:", pmDistanceSpin);
+    form->addRow("Total sampled points:", pmTotalPointsSpin);
+    form->addRow("Moon rotation (deg):", pmRotationSpin);
+    form->addRow("Planet X shift:", pmXShiftSpin);
+    form->addRow("Planet Y shift:", pmYShiftSpin);
+
+    return group;
+}
+
 void PatternPresetsWidget::updateLimits() {
     const double halfWidth = static_cast<double>(cameraWidth) / 2.0;
     const double halfHeight = static_cast<double>(cameraHeight) / 2.0;
@@ -410,6 +541,11 @@ void PatternPresetsWidget::updateLimits() {
     triangleScaleSpin->setRange(1.0, qMax(1.0, maxRadius));
     hexRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
     twoSpotsDistanceSpin->setRange(1.0, qMax(1.0, maxRadius));
+    starOuterRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
+    starInnerRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
+    pmPlanetRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
+    pmMoonRadiusSpin->setRange(1.0, qMax(1.0, maxRadius));
+    pmDistanceSpin->setRange(1.0, qMax(1.0, maxRadius));
 
     squareSizeSpin->setRange(1.0, qMax(1.0, minDimension));
     rectWidthSpin->setRange(1.0, qMax(1.0, static_cast<double>(cameraWidth)));
@@ -426,6 +562,8 @@ void PatternPresetsWidget::updateLimits() {
     applyShiftRange(rectXShiftSpin, rectYShiftSpin);
     applyShiftRange(hexXShiftSpin, hexYShiftSpin);
     applyShiftRange(twoSpotsXShiftSpin, twoSpotsYShiftSpin);
+    applyShiftRange(starXShiftSpin, starYShiftSpin);
+    applyShiftRange(pmXShiftSpin, pmYShiftSpin);
 
     if (circleRadiusSpin->value() > maxRadius) {
         circleRadiusSpin->setValue(maxRadius);
@@ -438,6 +576,21 @@ void PatternPresetsWidget::updateLimits() {
     }
     if (twoSpotsDistanceSpin->value() > maxRadius) {
         twoSpotsDistanceSpin->setValue(maxRadius);
+    }
+    if (starOuterRadiusSpin->value() > maxRadius) {
+        starOuterRadiusSpin->setValue(maxRadius);
+    }
+    if (starInnerRadiusSpin->value() > maxRadius) {
+        starInnerRadiusSpin->setValue(maxRadius);
+    }
+    if (pmPlanetRadiusSpin->value() > maxRadius) {
+        pmPlanetRadiusSpin->setValue(maxRadius);
+    }
+    if (pmMoonRadiusSpin->value() > maxRadius) {
+        pmMoonRadiusSpin->setValue(maxRadius);
+    }
+    if (pmDistanceSpin->value() > maxRadius) {
+        pmDistanceSpin->setValue(maxRadius);
     }
     if (squareSizeSpin->value() > minDimension) {
         squareSizeSpin->setValue(minDimension);
@@ -464,6 +617,10 @@ QString PatternPresetsWidget::presetName(int index) const {
         return "Hexagon";
     case TwoSpotsIndex:
         return "Two Spots";
+    case StarIndex:
+        return "Star";
+    case PlanetAndMoonIndex:
+        return "Planet & Moon";
     default:
         return "Pattern";
     }
