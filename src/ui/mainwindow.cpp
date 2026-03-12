@@ -67,6 +67,32 @@ QString gsStartingPhaseMaskToString(GSAlgorithm::GSStartingPhaseMask mask) {
     }
 }
 
+QString gsComputeBackendToString(GSAlgorithm::GSComputeBackend backend) {
+    switch (backend) {
+    case GSAlgorithm::GSComputeBackend::CPU:
+        return "CPU";
+    case GSAlgorithm::GSComputeBackend::CUDA:
+        return "CUDA";
+    case GSAlgorithm::GSComputeBackend::OpenCL:
+        return "OpenCL";
+    case GSAlgorithm::GSComputeBackend::Auto:
+    default:
+        return "Auto";
+    }
+}
+
+QString gsComputeBackendUsedToString(GSAlgorithm::GSComputeBackendUsed backend) {
+    switch (backend) {
+    case GSAlgorithm::GSComputeBackendUsed::CUDA:
+        return "CUDA";
+    case GSAlgorithm::GSComputeBackendUsed::OpenCL:
+        return "OpenCL";
+    case GSAlgorithm::GSComputeBackendUsed::CPU:
+    default:
+        return "CPU";
+    }
+}
+
 QString targetModeLabelFromIndex(int index) {
     switch (index) {
     case 0:
@@ -111,6 +137,11 @@ void appendGsRuntimeLogEntry(const QString &triggerLabel,
     out << "ms_per_iteration=" << QString::number(msPerIteration, 'f', 3) << "\n";
     out << "iterations=" << config.iterations << "\n";
     out << "starting_phase_mask=" << gsStartingPhaseMaskToString(config.startingPhaseMask) << "\n";
+    out << "compute_backend_requested=" << gsComputeBackendToString(config.computeBackend) << "\n";
+    out << "compute_backend_used=" << gsComputeBackendUsedToString(result.backendUsed) << "\n";
+    out << "backend_info=" << (result.backendInfo.isEmpty() ? "<none>" : result.backendInfo) << "\n";
+    out << "fallback_occurred=" << (result.fallbackOccurred ? "true" : "false") << "\n";
+    out << "fallback_reason=" << (result.fallbackReason.isEmpty() ? "<none>" : result.fallbackReason) << "\n";
     out << "requested_target_count=" << result.requestedTargetCount << "\n";
     out << "used_target_count=" << result.usedTargetCount << "\n";
     out << "skipped_outside_camera_fov=" << result.skippedOutsideCameraFov << "\n";
@@ -158,6 +189,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     autoRunGsEnabled = settings.value("Hardware/AutoRunGS", false).toBool();
     autoSendSlmEnabled = settings.value("Hardware/AutoSendSLM", false).toBool();
     gsStartingPhaseMaskMode = settings.value("Hardware/GS_StartingPhaseMask", 0).toInt();
+    gsComputeBackendMode = settings.value("Hardware/GS_ComputeBackend", 0).toInt();
+    openClPlatformIndex = settings.value("Hardware/GS_OpenCLPlatformIndex", 0).toInt();
+    openClDeviceIndex = settings.value("Hardware/GS_OpenCLDeviceIndex", 0).toInt();
+    cudaDeviceIndex = settings.value("Hardware/GS_CUDADeviceIndex", 0).toInt();
 
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
     slmOutputMode = settings.value("Hardware/SLM_OutputMode", DllOutputMode).toInt();
@@ -576,7 +611,8 @@ void MainWindow::setupConnections() {
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
-                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled, gsStartingPhaseMaskMode, this);
+                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled,
+                          gsStartingPhaseMaskMode, gsComputeBackendMode, openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex, this);
 
     if (dialog.exec() == QDialog::Accepted) {
         const int prevSlmWidth = slmWidth;
@@ -609,12 +645,20 @@ void MainWindow::openSettingsDialog() {
         autoRunGsEnabled = dialog.getAutoRunGsEnabled();
         autoSendSlmEnabled = dialog.getAutoSendSlmEnabled();
         gsStartingPhaseMaskMode = dialog.getStartingPhaseMaskMode();
+        gsComputeBackendMode = dialog.getGsComputeBackendMode();
+        openClPlatformIndex = dialog.getOpenClPlatformIndex();
+        openClDeviceIndex = dialog.getOpenClDeviceIndex();
+        cudaDeviceIndex = dialog.getCudaDeviceIndex();
 
         settings.setValue("Optical/FocalLength", fourierFocalLength);
         settings.setValue("Hardware/SLM_OutputMode", slmOutputMode);
         settings.setValue("Hardware/AutoRunGS", autoRunGsEnabled);
         settings.setValue("Hardware/AutoSendSLM", autoSendSlmEnabled);
         settings.setValue("Hardware/GS_StartingPhaseMask", gsStartingPhaseMaskMode);
+        settings.setValue("Hardware/GS_ComputeBackend", gsComputeBackendMode);
+        settings.setValue("Hardware/GS_OpenCLPlatformIndex", openClPlatformIndex);
+        settings.setValue("Hardware/GS_OpenCLDeviceIndex", openClDeviceIndex);
+        settings.setValue("Hardware/GS_CUDADeviceIndex", cudaDeviceIndex);
         settings.sync();
 
         if (!autoRunGsEnabled && gsAutoRunTimer) {
@@ -825,6 +869,25 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
     config.wavelengthNm = laserWavelength;
     config.focalLengthMm = fourierFocalLength;
     config.iterations = iterationsSpin ? iterationsSpin->value() : 20;
+    switch (gsComputeBackendMode) {
+    case 1:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CPU;
+        break;
+    case 2:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::OpenCL;
+        break;
+    case 3:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CUDA;
+        break;
+    case 0:
+    default:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::Auto;
+        break;
+    }
+    config.openClPlatformIndex = openClPlatformIndex;
+    config.openClDeviceIndex = openClDeviceIndex;
+    config.cudaDeviceIndex = cudaDeviceIndex;
+
     switch (gsStartingPhaseMaskMode) {
     case 1:
         config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
@@ -898,11 +961,31 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
     const QString sourceMsg = usingDefaultSource
         ? "Default Gaussian source used"
         : "Source Intensity map used";
-    QString statusMessage = QString("GS mask generated (%1 iterations, %2/%3 valid targets, %4).")
+    QString backendUsed = "CPU";
+    switch (result.backendUsed) {
+    case GSAlgorithm::GSComputeBackendUsed::CUDA:
+        backendUsed = "CUDA";
+        break;
+    case GSAlgorithm::GSComputeBackendUsed::OpenCL:
+        backendUsed = "OpenCL";
+        break;
+    case GSAlgorithm::GSComputeBackendUsed::CPU:
+    default:
+        backendUsed = "CPU";
+        break;
+    }
+    QString statusMessage = QString("GS mask generated (%1 iterations, %2/%3 valid targets, %4, backend: %5).")
                                 .arg(config.iterations)
                                 .arg(result.usedTargetCount)
                                 .arg(result.requestedTargetCount)
-                                .arg(sourceMsg);
+                                .arg(sourceMsg)
+                                .arg(backendUsed);
+    if (!result.backendInfo.isEmpty()) {
+        statusMessage += QString(" Device: %1.").arg(result.backendInfo);
+    }
+    if (result.fallbackOccurred && !result.fallbackReason.isEmpty()) {
+        statusMessage += QString(" Auto-fallback: %1.").arg(result.fallbackReason);
+    }
 #if HOT_ENABLE_TEMP_GS_PROFILING
     if (trigger == GsRunTrigger::ManualButton) {
         statusMessage += QString(" Runtime: %1 ms (%2 ms/iter).")

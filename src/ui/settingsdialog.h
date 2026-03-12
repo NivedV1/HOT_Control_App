@@ -17,6 +17,10 @@ public:
                    bool autoRunGsEnabled,
                    bool autoSendSlmEnabled,
                    int startingPhaseMaskMode,
+                   int gsComputeBackendMode,
+                   int openClPlatformIndex,
+                   int openClDeviceIndex,
+                   int cudaDeviceIndex,
                    QWidget *parent = nullptr);
 
     // SLM Getters
@@ -41,6 +45,10 @@ public:
     bool getAutoRunGsEnabled() const;
     bool getAutoSendSlmEnabled() const;
     int getStartingPhaseMaskMode() const;
+    int getGsComputeBackendMode() const;
+    int getOpenClPlatformIndex() const;
+    int getOpenClDeviceIndex() const;
+    int getCudaDeviceIndex() const;
 
 private:
     // SLM
@@ -51,6 +59,9 @@ private:
     QCheckBox *autoRunGsCheck;
     QCheckBox *autoSendSlmCheck;
     QComboBox *startingPhaseMaskCombo;
+    QComboBox *computeBackendCombo;
+    QComboBox *openClDeviceCombo;
+    QComboBox *cudaDeviceCombo;
 
     // Camera
     QComboBox *cameraBackendCombo;

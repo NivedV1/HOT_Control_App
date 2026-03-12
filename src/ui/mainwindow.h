@@ -193,6 +193,10 @@ private:
     bool autoRunGsEnabled = false;
     bool autoSendSlmEnabled = false;
     int gsStartingPhaseMaskMode = 0;
+    int gsComputeBackendMode = 0;
+    int openClPlatformIndex = 0;
+    int openClDeviceIndex = 0;
+    int cudaDeviceIndex = 0;
 
     // SLM Pointers & State
     QPushButton *loadPhaseBtn;

@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.16)
 project(HOT_Control_App VERSION 1.0 LANGUAGES CXX)
 
 option(HOT_ENABLE_TEMP_GS_PROFILING "Enable temporary GS runtime profiling/logging instrumentation" ON)
+option(HOT_ENABLE_OPENCL_GS "Enable OpenCV OpenCL GS backend" ON)
+option(HOT_ENABLE_CUDA_GS "Enable CUDA GS backend" ON)
+set(CUDA_TOOLKIT_ROOT_DIR "" CACHE PATH "Optional CUDA toolkit root directory")
 # Set C++ standard (C++17 is recommended for modern Qt and scientific computing)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +21,20 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidge
 # Find OpenCV
 set(OpenCV_DIR "C:/opencv/build")
 find_package(OpenCV REQUIRED)
+
+set(HOT_ENABLE_CUDA_GS_AVAILABLE OFF)
+if (HOT_ENABLE_CUDA_GS)
+    if (CUDA_TOOLKIT_ROOT_DIR)
+        set(CUDAToolkit_ROOT "${CUDA_TOOLKIT_ROOT_DIR}")
+    endif()
+    find_package(CUDAToolkit QUIET)
+    if (CUDAToolkit_FOUND)
+        enable_language(CUDA)
+        set(HOT_ENABLE_CUDA_GS_AVAILABLE ON)
+    else()
+        message(STATUS "HOT_ENABLE_CUDA_GS=ON but CUDA toolkit not found. Building without CUDA GS backend.")
+    endif()
+endif()
 
 # Define all the source files
 set(SOURCES
@@ -36,6 +53,12 @@ set(SOURCES
     src/ui/components/patternpresetswidget.cpp
 )
 
+if (HOT_ENABLE_CUDA_GS_AVAILABLE)
+    list(APPEND SOURCES
+        src/core/algorithms/gs_algorithm_cuda.cu
+    )
+endif()
+
 # Define header files
 set(HEADERS
     src/ui/mainwindow.h
@@ -51,6 +74,7 @@ set(HEADERS
     src/core/trap_manager.h
     src/core/algorithms/phase_algorithm.h
     src/core/algorithms/gs_algorithm.h
+    src/core/algorithms/gs_algorithm_cuda.h
     src/core/algorithms/wgs_algorithm.h
     src/hardware/slm_controller.h
     src/hardware/camera_stream.h
@@ -70,6 +94,19 @@ if (HOT_ENABLE_TEMP_GS_PROFILING)
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_TEMP_GS_PROFILING=0)
 endif()
+
+if (HOT_ENABLE_OPENCL_GS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_OPENCL_GS=1)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_OPENCL_GS=0)
+endif()
+
+if (HOT_ENABLE_CUDA_GS_AVAILABLE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_CUDA_GS=1)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_CUDA_GS=0)
+endif()
+
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     src/ui
@@ -90,6 +127,18 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${OpenCV_LIBS}
 )
 
+if (HOT_ENABLE_CUDA_GS_AVAILABLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        CUDA::cudart
+        CUDA::cufft
+    )
+
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        CUDA_STANDARD 17
+        CUDA_STANDARD_REQUIRED ON
+    )
+endif()
+
 if (WIN32)
     get_target_property(_qmake_executable Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(_qt_bin_dir "${_qmake_executable}" DIRECTORY)
@@ -107,4 +156,5 @@ if (WIN32)
         "C:/opencv/build/x64/vc16/bin/opencv_world4120.dll"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
     )
+
 endif()
