@@ -30,6 +30,7 @@ class QTimer;
 class QWidget;
 class TargetGridWidget;
 class PatternPresetsWidget;
+class ComputeBenchmarkDialog;
 
 // --- DLL Function Pointers (Bypasses the need for LabVIEW's extcode.h) ---
 typedef void (__stdcall *Window_Settings_Func)(int32_t MonitorNumber, int32_t WindowNumber015, int32_t XPixelShift, int32_t YPixelShift);
@@ -46,6 +47,7 @@ public:
 private slots:
     void openSettingsDialog();
     void openHologramGenerator();
+    void openComputeBenchmarkDialog();
     void openSourceIntensityDialog();
     void onSourceIntensityApplied(const QVector<float> &intensityMap, int width, int height, const QString &presetName, double beamWaistPx, const QImage &previewImage);
     void onTabChanged(int index);
@@ -81,12 +83,18 @@ private slots:
     void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
     void onGridPointRemoved(int pointId);
     void onGridPointSelected(int pointId);
-    void onPatternGenerated(const QVector<QPointF> &points, const QString &summary);
+    void onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details);
 
 private:
     enum SlmOutputMode {
         DllOutputMode = 0,
         DirectScreenOutputMode = 1
+    };
+
+    enum class GsRunTrigger {
+        ManualButton = 0,
+        AutoRunTimer = 1,
+        SendToSlmPreRun = 2
     };
 
     // Grid enlargement/minimize
@@ -125,7 +133,7 @@ private:
     void updateAlgorithmSettingsUi();
     void scheduleGsAutoRun();
     void autoSendToSlmIfEnabled();
-    bool generateAlgorithmMask(bool showWarnings);
+    bool generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger);
     QVector<float> defaultGsSourceAmplitude() const;
     bool isGerchbergSaxtonSelected() const;
 
@@ -187,6 +195,10 @@ private:
     bool autoRunGsEnabled = false;
     bool autoSendSlmEnabled = false;
     int gsStartingPhaseMaskMode = 0;
+    int gsComputeBackendMode = 0;
+    int openClPlatformIndex = 0;
+    int openClDeviceIndex = 0;
+    int cudaDeviceIndex = 0;
 
     // SLM Pointers & State
     QPushButton *loadPhaseBtn;
@@ -211,6 +223,7 @@ private:
     QActionGroup *monitorActionGroup = nullptr;
     QWidget *directOutputWindow = nullptr;
     QLabel *directOutputLabel = nullptr;
+    ComputeBenchmarkDialog *computeBenchmarkDialog = nullptr;
 
     // Auto-run timer
     QTimer *gsAutoRunTimer = nullptr;
@@ -219,7 +232,8 @@ private:
     QMap<int, QPointF> gridPointData;
     int selectedPointId = -1;
     bool suppressGridStatusMessages = false;
+    QString lastGeneratedPatternSummary;
+    QString lastGeneratedPatternDetails;
 };
 
 #endif // MAINWINDOW_H
-

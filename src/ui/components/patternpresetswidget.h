@@ -21,7 +21,7 @@ public:
     void setCameraResolution(int cameraWidth, int cameraHeight);
 
 signals:
-    void patternGenerated(const QVector<QPointF> &points, const QString &summary);
+    void patternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details);
 
 private slots:
     void onPresetChanged(int index);
@@ -53,6 +53,7 @@ private:
 
     void updateLimits();
     QString presetName(int index) const;
+    QString presetDetails(int index) const;
 
     int cameraWidth;
     int cameraHeight;

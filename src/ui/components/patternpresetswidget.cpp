@@ -232,8 +232,9 @@ void PatternPresetsWidget::onGenerateClicked() {
     const QString summary = QString("Generated %1 with %2 point(s).")
                                 .arg(presetName(index))
                                 .arg(points.size());
+    const QString details = presetDetails(index);
 
-    emit patternGenerated(points, summary);
+    emit patternGenerated(points, summary, details);
 }
 
 void PatternPresetsWidget::onTriangleSymmetricChanged(bool checked) {
@@ -706,3 +707,81 @@ QString PatternPresetsWidget::presetName(int index) const {
     }
 }
 
+
+QString PatternPresetsWidget::presetDetails(int index) const {
+    switch (index) {
+    case CircleIndex:
+        return QString("Circle(radius=%1, points=%2, rotation=%3, xShift=%4, yShift=%5)")
+            .arg(circleRadiusSpin->value(), 0, 'f', 2)
+            .arg(circlePointsSpin->value())
+            .arg(circleRotationSpin->value(), 0, 'f', 2)
+            .arg(circleXShiftSpin->value(), 0, 'f', 2)
+            .arg(circleYShiftSpin->value(), 0, 'f', 2);
+    case TriangleIndex:
+        return QString("Triangle(symmetric=%1, scale=%2, points=%3, rotation=%4, xShift=%5, yShift=%6)")
+            .arg(triangleSymmetricCheck->isChecked() ? "true" : "false")
+            .arg(triangleScaleSpin->value(), 0, 'f', 2)
+            .arg(trianglePointsSpin->value())
+            .arg(triangleRotationSpin->value(), 0, 'f', 2)
+            .arg(triangleXShiftSpin->value(), 0, 'f', 2)
+            .arg(triangleYShiftSpin->value(), 0, 'f', 2);
+    case SquareIndex:
+        return QString("Square(size=%1, points=%2, rotation=%3, xShift=%4, yShift=%5)")
+            .arg(squareSizeSpin->value(), 0, 'f', 2)
+            .arg(squarePointsSpin->value())
+            .arg(squareRotationSpin->value(), 0, 'f', 2)
+            .arg(squareXShiftSpin->value(), 0, 'f', 2)
+            .arg(squareYShiftSpin->value(), 0, 'f', 2);
+    case RectangleIndex:
+        return QString("Rectangle(width=%1, height=%2, points=%3, rotation=%4, xShift=%5, yShift=%6)")
+            .arg(rectWidthSpin->value(), 0, 'f', 2)
+            .arg(rectHeightSpin->value(), 0, 'f', 2)
+            .arg(rectPointsSpin->value())
+            .arg(rectRotationSpin->value(), 0, 'f', 2)
+            .arg(rectXShiftSpin->value(), 0, 'f', 2)
+            .arg(rectYShiftSpin->value(), 0, 'f', 2);
+    case HexagonIndex:
+        return QString("Hexagon(radius=%1, points=%2, rotation=%3, xShift=%4, yShift=%5)")
+            .arg(hexRadiusSpin->value(), 0, 'f', 2)
+            .arg(hexPointsSpin->value())
+            .arg(hexRotationSpin->value(), 0, 'f', 2)
+            .arg(hexXShiftSpin->value(), 0, 'f', 2)
+            .arg(hexYShiftSpin->value(), 0, 'f', 2);
+    case TwoSpotsIndex:
+        return QString("Two Spots(distance=%1, rotation=%2, xShift=%3, yShift=%4)")
+            .arg(twoSpotsDistanceSpin->value(), 0, 'f', 2)
+            .arg(twoSpotsRotationSpin->value(), 0, 'f', 2)
+            .arg(twoSpotsXShiftSpin->value(), 0, 'f', 2)
+            .arg(twoSpotsYShiftSpin->value(), 0, 'f', 2);
+    case StarIndex:
+        return QString("Star(starPoints=%1, outerRadius=%2, innerRadius=%3, totalPoints=%4, rotation=%5, xShift=%6, yShift=%7)")
+            .arg(starPointsSpin->value())
+            .arg(starOuterRadiusSpin->value(), 0, 'f', 2)
+            .arg(starInnerRadiusSpin->value(), 0, 'f', 2)
+            .arg(starTotalPointsSpin->value())
+            .arg(starRotationSpin->value(), 0, 'f', 2)
+            .arg(starXShiftSpin->value(), 0, 'f', 2)
+            .arg(starYShiftSpin->value(), 0, 'f', 2);
+    case PlanetAndMoonIndex:
+        return QString("Planet & Moon(planetRadius=%1, moonRadius=%2, moonDistance=%3, totalPoints=%4, rotation=%5, xShift=%6, yShift=%7)")
+            .arg(pmPlanetRadiusSpin->value(), 0, 'f', 2)
+            .arg(pmMoonRadiusSpin->value(), 0, 'f', 2)
+            .arg(pmDistanceSpin->value(), 0, 'f', 2)
+            .arg(pmTotalPointsSpin->value())
+            .arg(pmRotationSpin->value(), 0, 'f', 2)
+            .arg(pmXShiftSpin->value(), 0, 'f', 2)
+            .arg(pmYShiftSpin->value(), 0, 'f', 2);
+    case GridIndex:
+        return QString("N*M Grid(rows=%1, cols=%2, rowSpacing=%3, colSpacing=%4, centered=%5, rotation=%6, xShift=%7, yShift=%8)")
+            .arg(gridRowsSpin->value())
+            .arg(gridColsSpin->value())
+            .arg(gridRowSpacingSpin->value(), 0, 'f', 2)
+            .arg(gridColSpacingSpin->value(), 0, 'f', 2)
+            .arg(gridCenterCheck->isChecked() ? "true" : "false")
+            .arg(gridRotationSpin->value(), 0, 'f', 2)
+            .arg(gridXShiftSpin->value(), 0, 'f', 2)
+            .arg(gridYShiftSpin->value(), 0, 'f', 2);
+    default:
+        return QString("Pattern(details-unavailable)");
+    }
+}

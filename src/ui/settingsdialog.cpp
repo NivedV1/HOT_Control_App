@@ -1,11 +1,14 @@
 #include "settingsdialog.h"
 #include "components/arrowspinbox.h"
+#include "../core/algorithms/gs_algorithm.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QStandardItemModel>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <QtGlobal>
 
@@ -15,6 +18,10 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                bool autoRunGsEnabled,
                                bool autoSendSlmEnabled,
                                int startingPhaseMaskMode,
+                               int gsComputeBackendMode,
+                               int openClPlatformIndex,
+                               int openClDeviceIndex,
+                               int cudaDeviceIndex,
                                QWidget *parent)
     : QDialog(parent) {
 
@@ -50,6 +57,83 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     const int safeIndex = startingPhaseMaskCombo->findData(safeMode);
     startingPhaseMaskCombo->setCurrentIndex((safeIndex >= 0) ? safeIndex : 0);
 
+    computeBackendCombo = new QComboBox(this);
+#if HOT_ENABLE_CUDA_GS
+    computeBackendCombo->addItem("Auto (CUDA -> OpenCL -> CPU)", 0);
+#else
+    computeBackendCombo->addItem("Auto (OpenCL -> CPU)", 0);
+#endif
+    computeBackendCombo->addItem("CPU", 1);
+    computeBackendCombo->addItem("OpenCL", 2);
+    computeBackendCombo->addItem("CUDA", 3);
+
+#if !HOT_ENABLE_CUDA_GS
+    const int cudaBackendRow = computeBackendCombo->findData(3);
+    if (cudaBackendRow >= 0) {
+        QStandardItemModel *model = qobject_cast<QStandardItemModel *>(computeBackendCombo->model());
+        if (model) {
+            QStandardItem *item = model->item(cudaBackendRow);
+            if (item) {
+                item->setText("CUDA (unavailable in this build)");
+                item->setEnabled(false);
+            }
+        }
+    }
+#endif
+
+    int requestedBackendMode = gsComputeBackendMode;
+#if !HOT_ENABLE_CUDA_GS
+    if (requestedBackendMode == 3) {
+        requestedBackendMode = 0;
+    }
+#endif
+    const int safeBackendIndex = computeBackendCombo->findData(requestedBackendMode);
+    computeBackendCombo->setCurrentIndex((safeBackendIndex >= 0) ? safeBackendIndex : 0);
+
+    openClDeviceCombo = new QComboBox(this);
+    const QVector<GSAlgorithm::GSOpenClDeviceInfo> openClDevices = GSAlgorithm::enumerateOpenClDevices();
+    if (openClDevices.isEmpty()) {
+        openClDeviceCombo->addItem("No OpenCL devices detected", "-1:-1");
+    } else {
+        for (const GSAlgorithm::GSOpenClDeviceInfo &device : openClDevices) {
+            const QString key = QString("%1:%2").arg(device.platformIndex).arg(device.deviceIndex);
+            openClDeviceCombo->addItem(device.displayName, key);
+        }
+    }
+
+    const QString targetDeviceKey = QString("%1:%2").arg(openClPlatformIndex).arg(openClDeviceIndex);
+    const int selectedDeviceIdx = openClDeviceCombo->findData(targetDeviceKey);
+    if (selectedDeviceIdx >= 0) {
+        openClDeviceCombo->setCurrentIndex(selectedDeviceIdx);
+    } else {
+        openClDeviceCombo->setCurrentIndex(0);
+    }
+
+    cudaDeviceCombo = new QComboBox(this);
+#if HOT_ENABLE_CUDA_GS
+    const QVector<GSAlgorithm::GSCudaDeviceInfo> cudaDevices = GSAlgorithm::enumerateCudaDevices();
+    if (cudaDevices.isEmpty()) {
+        cudaDeviceCombo->addItem("No CUDA devices detected", -1);
+    } else {
+        for (const GSAlgorithm::GSCudaDeviceInfo &device : cudaDevices) {
+            QString display = device.displayName;
+            if (!device.isCompatible) {
+                display += " [Incompatible]";
+            }
+            cudaDeviceCombo->addItem(display, device.deviceIndex);
+        }
+    }
+#else
+    cudaDeviceCombo->addItem("CUDA backend unavailable in this build", -1);
+#endif
+
+    const int cudaSelectedIdx = cudaDeviceCombo->findData(cudaDeviceIndex);
+    if (cudaSelectedIdx >= 0) {
+        cudaDeviceCombo->setCurrentIndex(cudaSelectedIdx);
+    } else {
+        cudaDeviceCombo->setCurrentIndex(0);
+    }
+
     slmForm->addRow("SLM Width (pixels):", widthSpin);
     slmForm->addRow("SLM Height (pixels):", heightSpin);
     slmForm->addRow("SLM Pixel Size:", pixelSpin);
@@ -57,7 +141,28 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     slmForm->addRow("Auto-run GS:", autoRunGsCheck);
     slmForm->addRow("Auto-send SLM:", autoSendSlmCheck);
     slmForm->addRow("Starting Phase Mask:", startingPhaseMaskCombo);
+    slmForm->addRow("GS Compute Backend:", computeBackendCombo);
+    slmForm->addRow("OpenCL Device:", openClDeviceCombo);
+    slmForm->addRow("CUDA Device:", cudaDeviceCombo);
     slmGroup->setLayout(slmForm);
+
+    auto refreshDeviceEnabledState = [this]() {
+        const int backendMode = computeBackendCombo->currentData().toInt();
+        const bool backendNeedsOpenCl = (backendMode == 0 || backendMode == 2);
+        const bool backendNeedsCuda = (backendMode == 0 || backendMode == 3);
+        const bool hasValidDevice = openClDeviceCombo->currentData().toString() != "-1:-1";
+        const bool hasValidCudaDevice = cudaDeviceCombo->currentData().toInt() >= 0;
+        openClDeviceCombo->setEnabled(backendNeedsOpenCl && hasValidDevice);
+        cudaDeviceCombo->setEnabled(backendNeedsCuda && hasValidCudaDevice);
+    };
+    connect(computeBackendCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            [refreshDeviceEnabledState](int index) {
+                Q_UNUSED(index);
+                refreshDeviceEnabledState();
+            });
+    refreshDeviceEnabledState();
 
     // --- 2. CAMERA SETTINGS ---
     QGroupBox *camGroup = new QGroupBox("Camera Parameters");
@@ -130,4 +235,33 @@ int SettingsDialog::getSlmOutputMode() const { return slmOutputModeCombo->curren
 bool SettingsDialog::getAutoRunGsEnabled() const { return autoRunGsCheck->isChecked(); }
 bool SettingsDialog::getAutoSendSlmEnabled() const { return autoSendSlmCheck->isChecked(); }
 int SettingsDialog::getStartingPhaseMaskMode() const { return startingPhaseMaskCombo->currentData().toInt(); }
+int SettingsDialog::getGsComputeBackendMode() const { return computeBackendCombo->currentData().toInt(); }
+
+int SettingsDialog::getOpenClPlatformIndex() const {
+    const QString packed = openClDeviceCombo->currentData().toString();
+    const QStringList parts = packed.split(':');
+    if (parts.size() != 2) {
+        return -1;
+    }
+    bool ok = false;
+    const int value = parts.at(0).toInt(&ok);
+    return ok ? value : -1;
+}
+
+int SettingsDialog::getOpenClDeviceIndex() const {
+    const QString packed = openClDeviceCombo->currentData().toString();
+    const QStringList parts = packed.split(':');
+    if (parts.size() != 2) {
+        return -1;
+    }
+    bool ok = false;
+    const int value = parts.at(1).toInt(&ok);
+    return ok ? value : -1;
+}
+
+int SettingsDialog::getCudaDeviceIndex() const {
+    bool ok = false;
+    const int value = cudaDeviceCombo->currentData().toInt(&ok);
+    return ok ? value : -1;
+}
 

@@ -1,11 +1,17 @@
-{
-    "chat.tools.terminal.autoApprove": {
-        "cmake": true,
-        "Ctrl+Z": true,
-        "/^exit\\(\\)$/": {
-            "approve": true,
-            "matchCommandLine": true
-        },
-        "&\"C:\\Users\\NIVED\\Desktop\\HOT_Control_App\\build\\Release\\HOT_Control_App.exe\"": true
-    }
+﻿{
+    "chat.tools.terminal.autoApprove":  {
+                                            "cmake":  true,
+                                            "Ctrl+Z":  true,
+                                            "/^exit\\(\\)$/":  {
+                                                                   "approve":  true,
+                                                                   "matchCommandLine":  true
+                                                               },
+                                            "\u0026\"C:\\Users\\NIVED\\Desktop\\HOT_Control_App\\build\\Release\\HOT_Control_App.exe\"":  true
+                                        },
+    "cmake.configureEnvironment":  {
+                                       "QTFRAMEWORK_BYPASS_LICENSE_CHECK":  "1"
+                                   },
+    "cmake.buildEnvironment":  {
+                                   "QTFRAMEWORK_BYPASS_LICENSE_CHECK":  "1"
+                               }
 }

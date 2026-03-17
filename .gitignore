@@ -1,2 +1,4 @@
 build/
 FEATURE_IMPLEMENTATION.md
+build_no_cuda/
+cmake-buld-debug/

@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "settingsdialog.h"
 #include "hologramdialog.h"
+#include "computebenchmarkdialog.h"
 #include "sourceintensitydialog.h"
 #include "components/targetgridwidget.h"
 #include "components/patternpresetswidget.h"
@@ -29,6 +30,7 @@
 #include <QMessageBox>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QApplication>
@@ -52,6 +54,120 @@ constexpr int kGsAutoRunDebounceMs = 180;
 QString hardwareConfigPath() {
     return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
 }
+
+#if HOT_ENABLE_TEMP_GS_PROFILING
+QString gsStartingPhaseMaskToString(GSAlgorithm::GSStartingPhaseMask mask) {
+    switch (mask) {
+    case GSAlgorithm::GSStartingPhaseMask::BinaryGrating:
+        return "BinaryGrating";
+    case GSAlgorithm::GSStartingPhaseMask::RandomPhase:
+        return "RandomPhase";
+    case GSAlgorithm::GSStartingPhaseMask::Checkerboard:
+    default:
+        return "Checkerboard";
+    }
+}
+
+QString gsComputeBackendToString(GSAlgorithm::GSComputeBackend backend) {
+    switch (backend) {
+    case GSAlgorithm::GSComputeBackend::CPU:
+        return "CPU";
+    case GSAlgorithm::GSComputeBackend::CUDA:
+        return "CUDA";
+    case GSAlgorithm::GSComputeBackend::OpenCL:
+        return "OpenCL";
+    case GSAlgorithm::GSComputeBackend::Auto:
+    default:
+        return "Auto";
+    }
+}
+
+QString gsComputeBackendUsedToString(GSAlgorithm::GSComputeBackendUsed backend) {
+    switch (backend) {
+    case GSAlgorithm::GSComputeBackendUsed::CUDA:
+        return "CUDA";
+    case GSAlgorithm::GSComputeBackendUsed::OpenCL:
+        return "OpenCL";
+    case GSAlgorithm::GSComputeBackendUsed::CPU:
+    default:
+        return "CPU";
+    }
+}
+
+QString targetModeLabelFromIndex(int index) {
+    switch (index) {
+    case 0:
+        return "Manual";
+    case 1:
+        return "Pattern";
+    case 2:
+        return "Image";
+    case 3:
+        return "Camera";
+    default:
+        return "Unknown";
+    }
+}
+
+void appendGsRuntimeLogEntry(const QString &triggerLabel,
+                             const QString &targetModeLabel,
+                             const QString &patternSummary,
+                             const QString &patternDetails,
+                             bool success,
+                             const QString &error,
+                             qint64 elapsedMs,
+                             double msPerIteration,
+                             const GSAlgorithm::GSConfig &config,
+                             const GSAlgorithm::GSResult &result,
+                             bool usingDefaultSource,
+                             const QString &sourcePresetName,
+                             double sourceBeamWaistPx,
+                             int targetPointCount) {
+    QFile logFile(QCoreApplication::applicationDirPath() + "/gs_runtime_debug.log");
+    if (!logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        qWarning() << "Failed to append GS runtime log:" << logFile.fileName();
+        return;
+    }
+
+    QTextStream out(&logFile);
+    out << "==== GS_RUN " << QDateTime::currentDateTime().toString(Qt::ISODateWithMs) << " ====\n";
+    out << "trigger=" << triggerLabel << "\n";
+    out << "success=" << (success ? "true" : "false") << "\n";
+    out << "error=" << (error.isEmpty() ? "<none>" : error) << "\n";
+    out << "elapsed_ms=" << elapsedMs << "\n";
+    out << "ms_per_iteration=" << QString::number(msPerIteration, 'f', 3) << "\n";
+    out << "iterations=" << config.iterations << "\n";
+    out << "starting_phase_mask=" << gsStartingPhaseMaskToString(config.startingPhaseMask) << "\n";
+    out << "compute_backend_requested=" << gsComputeBackendToString(config.computeBackend) << "\n";
+    out << "compute_backend_used=" << gsComputeBackendUsedToString(result.backendUsed) << "\n";
+    out << "backend_info=" << (result.backendInfo.isEmpty() ? "<none>" : result.backendInfo) << "\n";
+    out << "fallback_occurred=" << (result.fallbackOccurred ? "true" : "false") << "\n";
+    out << "fallback_reason=" << (result.fallbackReason.isEmpty() ? "<none>" : result.fallbackReason) << "\n";
+    out << "requested_target_count=" << result.requestedTargetCount << "\n";
+    out << "used_target_count=" << result.usedTargetCount << "\n";
+    out << "skipped_outside_camera_fov=" << result.skippedOutsideCameraFov << "\n";
+    out << "skipped_outside_slm_bounds=" << result.skippedOutsideSlmBounds << "\n";
+    out << "active_target_points=" << targetPointCount << "\n";
+    out << "target_mode=" << targetModeLabel << "\n";
+    if (targetModeLabel == "Pattern") {
+        out << "pattern_summary=" << (patternSummary.isEmpty() ? "<none>" : patternSummary) << "\n";
+        out << "pattern_details=" << (patternDetails.isEmpty() ? "<none>" : patternDetails) << "\n";
+    }
+    out << "source_mode=" << (usingDefaultSource ? "default_gaussian" : "custom_source_map") << "\n";
+    if (!usingDefaultSource) {
+        out << "source_preset=" << (sourcePresetName.isEmpty() ? "<unnamed>" : sourcePresetName) << "\n";
+        out << "source_beam_waist_px=" << QString::number(sourceBeamWaistPx, 'f', 3) << "\n";
+    }
+    out << "slm_resolution=" << config.slmWidth << "x" << config.slmHeight << "\n";
+    out << "cam_resolution=" << config.camWidth << "x" << config.camHeight << "\n";
+    out << "slm_pixel_size_um=" << QString::number(config.slmPixelSizeUm, 'f', 4) << "\n";
+    out << "cam_pixel_size_um=" << QString::number(config.camPixelSizeUm, 'f', 4) << "\n";
+    out << "wavelength_nm=" << QString::number(config.wavelengthNm, 'f', 4) << "\n";
+    out << "focal_length_mm=" << QString::number(config.focalLengthMm, 'f', 4) << "\n";
+    out << "\n";
+    out.flush();
+}
+#endif
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -74,6 +190,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     autoRunGsEnabled = settings.value("Hardware/AutoRunGS", false).toBool();
     autoSendSlmEnabled = settings.value("Hardware/AutoSendSLM", false).toBool();
     gsStartingPhaseMaskMode = settings.value("Hardware/GS_StartingPhaseMask", 0).toInt();
+    gsComputeBackendMode = settings.value("Hardware/GS_ComputeBackend", 0).toInt();
+    openClPlatformIndex = settings.value("Hardware/GS_OpenCLPlatformIndex", 0).toInt();
+    openClDeviceIndex = settings.value("Hardware/GS_OpenCLDeviceIndex", 0).toInt();
+    cudaDeviceIndex = settings.value("Hardware/GS_CUDADeviceIndex", 0).toInt();
 
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
     slmOutputMode = settings.value("Hardware/SLM_OutputMode", DllOutputMode).toInt();
@@ -166,6 +286,8 @@ void MainWindow::createMenus() {
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
     QAction *holoAction = toolsMenu->addAction("Create Hologram...");
     connect(holoAction, &QAction::triggered, this, &MainWindow::openHologramGenerator);
+    QAction *benchmarkAction = toolsMenu->addAction("Benchmark Compute...");
+    connect(benchmarkAction, &QAction::triggered, this, &MainWindow::openComputeBenchmarkDialog);
 
     monitorSelectionMenu = toolsMenu->addMenu("Select Monitor");
     monitorActionGroup = new QActionGroup(this);
@@ -452,6 +574,8 @@ void MainWindow::setupConnections() {
         gridPointData.clear();
         trapTable->setRowCount(0);
         selectedPointId = -1;
+        lastGeneratedPatternSummary.clear();
+        lastGeneratedPatternDetails.clear();
     });
 
     connect(camSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), camManager, &CameraManager::changeCamera);
@@ -490,7 +614,8 @@ void MainWindow::setupConnections() {
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
-                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled, gsStartingPhaseMaskMode, this);
+                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled,
+                          gsStartingPhaseMaskMode, gsComputeBackendMode, openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex, this);
 
     if (dialog.exec() == QDialog::Accepted) {
         const int prevSlmWidth = slmWidth;
@@ -523,13 +648,25 @@ void MainWindow::openSettingsDialog() {
         autoRunGsEnabled = dialog.getAutoRunGsEnabled();
         autoSendSlmEnabled = dialog.getAutoSendSlmEnabled();
         gsStartingPhaseMaskMode = dialog.getStartingPhaseMaskMode();
+        gsComputeBackendMode = dialog.getGsComputeBackendMode();
+        openClPlatformIndex = dialog.getOpenClPlatformIndex();
+        openClDeviceIndex = dialog.getOpenClDeviceIndex();
+        cudaDeviceIndex = dialog.getCudaDeviceIndex();
 
         settings.setValue("Optical/FocalLength", fourierFocalLength);
         settings.setValue("Hardware/SLM_OutputMode", slmOutputMode);
         settings.setValue("Hardware/AutoRunGS", autoRunGsEnabled);
         settings.setValue("Hardware/AutoSendSLM", autoSendSlmEnabled);
         settings.setValue("Hardware/GS_StartingPhaseMask", gsStartingPhaseMaskMode);
+        settings.setValue("Hardware/GS_ComputeBackend", gsComputeBackendMode);
+        settings.setValue("Hardware/GS_OpenCLPlatformIndex", openClPlatformIndex);
+        settings.setValue("Hardware/GS_OpenCLDeviceIndex", openClDeviceIndex);
+        settings.setValue("Hardware/GS_CUDADeviceIndex", cudaDeviceIndex);
         settings.sync();
+
+        if (computeBenchmarkDialog) {
+            computeBenchmarkDialog->setDeviceSelectionIndices(openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex);
+        }
 
         if (!autoRunGsEnabled && gsAutoRunTimer) {
             gsAutoRunTimer->stop();
@@ -584,6 +721,21 @@ void MainWindow::openHologramGenerator() {
     connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
     connect(&dialog, &HologramDialog::sendToSLMRequested, this, &MainWindow::sendHologramToSLM);
     dialog.exec();
+}
+
+void MainWindow::openComputeBenchmarkDialog() {
+    if (!computeBenchmarkDialog) {
+        computeBenchmarkDialog = new ComputeBenchmarkDialog(openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex, this);
+        connect(computeBenchmarkDialog, &QObject::destroyed, this, [this]() {
+            computeBenchmarkDialog = nullptr;
+        });
+    } else {
+        computeBenchmarkDialog->setDeviceSelectionIndices(openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex);
+    }
+
+    computeBenchmarkDialog->show();
+    computeBenchmarkDialog->raise();
+    computeBenchmarkDialog->activateWindow();
 }
 
 void MainWindow::openSourceIntensityDialog() {
@@ -661,7 +813,7 @@ void MainWindow::onAlgorithmSelectionChanged(int index) {
 }
 
 void MainWindow::onGenerateGsMaskClicked() {
-    generateAlgorithmMask(true);
+    generateAlgorithmMask(true, GsRunTrigger::ManualButton);
 }
 
 void MainWindow::scheduleGsAutoRun() {
@@ -697,10 +849,10 @@ void MainWindow::onGsAutoRunTimeout() {
         return;
     }
 
-    generateAlgorithmMask(false);
+    generateAlgorithmMask(false, GsRunTrigger::AutoRunTimer);
 }
 
-bool MainWindow::generateAlgorithmMask(bool showWarnings) {
+bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) {
     if (!isGerchbergSaxtonSelected()) {
         if (showWarnings) {
             QMessageBox::information(this, "Weighted GS", "Weighted GS is not implemented yet.");
@@ -739,6 +891,25 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings) {
     config.wavelengthNm = laserWavelength;
     config.focalLengthMm = fourierFocalLength;
     config.iterations = iterationsSpin ? iterationsSpin->value() : 20;
+    switch (gsComputeBackendMode) {
+    case 1:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CPU;
+        break;
+    case 2:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::OpenCL;
+        break;
+    case 3:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CUDA;
+        break;
+    case 0:
+    default:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::Auto;
+        break;
+    }
+    config.openClPlatformIndex = openClPlatformIndex;
+    config.openClDeviceIndex = openClDeviceIndex;
+    config.cudaDeviceIndex = cudaDeviceIndex;
+
     switch (gsStartingPhaseMaskMode) {
     case 1:
         config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
@@ -751,7 +922,50 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings) {
         config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::Checkerboard;
         break;
     }
+
+#if HOT_ENABLE_TEMP_GS_PROFILING
+    QElapsedTimer gsTimer;
+    gsTimer.start();
+#endif
+
     const GSAlgorithm::GSResult result = GSAlgorithm::runGerchbergSaxton(config, sourceAmplitude, targets);
+
+#if HOT_ENABLE_TEMP_GS_PROFILING
+    const qint64 elapsedMs = gsTimer.elapsed();
+    const double msPerIteration = config.iterations > 0
+        ? static_cast<double>(elapsedMs) / static_cast<double>(config.iterations)
+        : 0.0;
+    const QString triggerLabel = [trigger]() {
+        switch (trigger) {
+        case GsRunTrigger::ManualButton:
+            return QString("manual_button");
+        case GsRunTrigger::AutoRunTimer:
+            return QString("auto_run_timer");
+        case GsRunTrigger::SendToSlmPreRun:
+            return QString("send_to_slm_pre_run");
+        default:
+            return QString("unknown");
+        }
+    }();
+
+    if (trigger == GsRunTrigger::ManualButton) {
+        appendGsRuntimeLogEntry(triggerLabel,
+                                targetModeLabelFromIndex(targetModeTabs ? targetModeTabs->currentIndex() : -1),
+                                lastGeneratedPatternSummary,
+                                lastGeneratedPatternDetails,
+                                result.success,
+                                result.error,
+                                elapsedMs,
+                                msPerIteration,
+                                config,
+                                result,
+                                usingDefaultSource,
+                                sourcePresetName,
+                                sourceBeamWaistPx,
+                                targets.size());
+    }
+#endif
+
     if (!result.success) {
         if (showWarnings) {
             QMessageBox::warning(this, "GS Algorithm", result.error);
@@ -769,20 +983,46 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings) {
     const QString sourceMsg = usingDefaultSource
         ? "Default Gaussian source used"
         : "Source Intensity map used";
-    statusBar()->showMessage(QString("GS mask generated (%1 iterations, %2/%3 valid targets, %4).")
-                                 .arg(config.iterations)
-                                 .arg(result.usedTargetCount)
-                                 .arg(result.requestedTargetCount)
-                                 .arg(sourceMsg),
-                             4000);
+    QString backendUsed = "CPU";
+    switch (result.backendUsed) {
+    case GSAlgorithm::GSComputeBackendUsed::CUDA:
+        backendUsed = "CUDA";
+        break;
+    case GSAlgorithm::GSComputeBackendUsed::OpenCL:
+        backendUsed = "OpenCL";
+        break;
+    case GSAlgorithm::GSComputeBackendUsed::CPU:
+    default:
+        backendUsed = "CPU";
+        break;
+    }
+    QString statusMessage = QString("GS mask generated (%1 iterations, %2/%3 valid targets, %4, backend: %5).")
+                                .arg(config.iterations)
+                                .arg(result.usedTargetCount)
+                                .arg(result.requestedTargetCount)
+                                .arg(sourceMsg)
+                                .arg(backendUsed);
+    if (!result.backendInfo.isEmpty()) {
+        statusMessage += QString(" Device: %1.").arg(result.backendInfo);
+    }
+    if (result.fallbackOccurred && !result.fallbackReason.isEmpty()) {
+        statusMessage += QString(" Auto-fallback: %1.").arg(result.fallbackReason);
+    }
+#if HOT_ENABLE_TEMP_GS_PROFILING
+    if (trigger == GsRunTrigger::ManualButton) {
+        statusMessage += QString(" Runtime: %1 ms (%2 ms/iter).")
+            .arg(elapsedMs)
+            .arg(msPerIteration, 0, 'f', 3);
+    }
+#endif
+    statusBar()->showMessage(statusMessage, 4000);
 
     autoSendToSlmIfEnabled();
     return true;
 }
-
 void MainWindow::onSendToSlmRequested() {
     if (isGerchbergSaxtonSelected() && !gridPointData.isEmpty()) {
-        if (!generateAlgorithmMask(true)) {
+        if (!generateAlgorithmMask(true, GsRunTrigger::SendToSlmPreRun)) {
             return;
         }
 
@@ -904,6 +1144,8 @@ void MainWindow::onGridPointAdded(int pointId, QPointF pixelCoords) {
     trapTable->setItem(row, 2, new QTableWidgetItem(QString::number((int)pixelCoords.y())));
 
     if (!suppressGridStatusMessages) {
+        lastGeneratedPatternSummary.clear();
+        lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 added at (%2, %3)").arg(pointId).arg((int)pixelCoords.x()).arg((int)pixelCoords.y()), 3000);
     }
 
@@ -923,6 +1165,8 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
             }
         }
 
+        lastGeneratedPatternSummary.clear();
+        lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)").arg(pointId).arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()), 2000);
         scheduleGsAutoRun();
     }
@@ -940,6 +1184,8 @@ void MainWindow::onGridPointRemoved(int pointId) {
             }
         }
 
+        lastGeneratedPatternSummary.clear();
+        lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 removed").arg(pointId), 2000);
         scheduleGsAutoRun();
     }
@@ -959,7 +1205,9 @@ void MainWindow::onGridPointSelected(int pointId) {
     statusBar()->showMessage(QString("Point #%1 selected (use arrow keys to move, Delete to remove)").arg(pointId), 3000);
 }
 
-void MainWindow::onPatternGenerated(const QVector<QPointF> &points, const QString &summary) {
+void MainWindow::onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details) {
+    lastGeneratedPatternSummary = summary;
+    lastGeneratedPatternDetails = details;
     replaceGridWithPoints(points);
     statusBar()->showMessage(summary, 4000);
 }
@@ -1581,4 +1829,3 @@ void MainWindow::toggleGridEnlarged() {
         gridMaxMinBtn->setToolTip("Enlarge grid view");
     }
 }
-
