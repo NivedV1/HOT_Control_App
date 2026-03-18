@@ -12,7 +12,7 @@
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "cacheVariables": {
-        "Qt6_DIR": "C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6"
+        "Qt6_DIR": "C:/Qt/6.7.3/msvc2022_64/lib/cmake/Qt6"
       },
       "environment": {
         "QTFRAMEWORK_BYPASS_LICENSE_CHECK": "1"
