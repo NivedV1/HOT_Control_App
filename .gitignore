@@ -3,3 +3,4 @@ FEATURE_IMPLEMENTATION.md
 .idea/
 .vscode/
 cmake-build-debug/
+build_gt730_combo/
