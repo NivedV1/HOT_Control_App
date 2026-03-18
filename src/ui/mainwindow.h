@@ -23,6 +23,7 @@ class QGridLayout;
 class QMenu;
 class QAction;
 class QActionGroup;
+class ComputeBenchmarkDialog;
 class QScreen;
 class QSpinBox;
 class QDoubleSpinBox;
@@ -46,6 +47,7 @@ public:
 private slots:
     void openSettingsDialog();
     void openHologramGenerator();
+    void openBenchmarkDialog();
     void openSourceIntensityDialog();
     void onSourceIntensityApplied(const QVector<float> &intensityMap, int width, int height, const QString &presetName, double beamWaistPx, const QImage &previewImage);
     void onTabChanged(int index);

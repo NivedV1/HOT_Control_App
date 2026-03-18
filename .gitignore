@@ -1,2 +1,5 @@
 build/
 FEATURE_IMPLEMENTATION.md
+.idea/
+.vscode/
+cmake-build-debug/

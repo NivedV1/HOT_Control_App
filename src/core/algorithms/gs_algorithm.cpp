@@ -691,7 +691,15 @@ QVector<GSOpenClDeviceInfo> enumerateOpenClDevices() {
 QVector<GSCudaDeviceInfo> enumerateCudaDevices() {
     QVector<GSCudaDeviceInfo> devices;
 #if HOT_ENABLE_CUDA_GS
-    devices = CudaBackend::enumerateCudaDevicesNative();
+    auto nativeDevices = CudaBackend::enumerateCudaDevicesNative();
+    devices.reserve(static_cast<int>(nativeDevices.size()));
+    for (const auto &nd : nativeDevices) {
+        GSCudaDeviceInfo info;
+        info.deviceIndex = nd.deviceIndex;
+        info.displayName = QString::fromStdString(nd.displayName);
+        info.isCompatible = nd.isCompatible;
+        devices.append(info);
+    }
 #endif
     return devices;
 }
@@ -720,15 +728,38 @@ GSResult runGerchbergSaxton(const GSConfig &config,
         if (config.computeBackend == GSComputeBackend::Auto || config.computeBackend == GSComputeBackend::CUDA) {
             cudaTried = true;
 #if HOT_ENABLE_CUDA_GS
-            GSResult cudaResult = CudaBackend::runGerchbergSaxtonCudaNative(config,
-                                                                             sourceAmplitude,
-                                                                             prepared.targetAmplitude,
-                                                                             prepared.initialPhaseRad,
-                                                                             preparedResult);
-            if (cudaResult.success) {
+            CudaBackend::GSCudaConfigNative cudaConfig;
+            cudaConfig.slmWidth = config.slmWidth;
+            cudaConfig.slmHeight = config.slmHeight;
+            cudaConfig.iterations = config.iterations;
+            cudaConfig.cudaDeviceIndex = config.cudaDeviceIndex;
+
+            std::vector<float> nativeSourceAmp(sourceAmplitude.size());
+            std::copy(sourceAmplitude.begin(), sourceAmplitude.end(), nativeSourceAmp.begin());
+            
+            std::vector<float> nativeTargetAmp(prepared.targetAmplitude.size());
+            std::copy(prepared.targetAmplitude.begin(), prepared.targetAmplitude.end(), nativeTargetAmp.begin());
+            
+            std::vector<float> nativeInitialPhase(prepared.initialPhaseRad.size());
+            std::copy(prepared.initialPhaseRad.begin(), prepared.initialPhaseRad.end(), nativeInitialPhase.begin());
+
+            auto nativeResult = CudaBackend::runGerchbergSaxtonCudaNative(cudaConfig,
+                                                                          nativeSourceAmp,
+                                                                          nativeTargetAmp,
+                                                                          nativeInitialPhase);
+            if (nativeResult.success) {
+                GSResult cudaResult = preparedResult;
+                cudaResult.success = true;
+                cudaResult.backendUsed = GSComputeBackendUsed::CUDA;
+                cudaResult.backendInfo = QString::fromStdString(nativeResult.backendInfo);
+                
+                QVector<float> phaseOut;
+                phaseOut.reserve(static_cast<int>(nativeResult.phaseOut.size()));
+                for (float v : nativeResult.phaseOut) phaseOut.append(v);
+                populateResultPhaseImage(phaseOut, config.slmWidth, config.slmHeight, cudaResult);
                 return cudaResult;
             }
-            cudaFailure = cudaResult.error;
+            cudaFailure = QString::fromStdString(nativeResult.error);
 #else
             cudaFailure = "CUDA GS backend is disabled in this build.";
 #endif

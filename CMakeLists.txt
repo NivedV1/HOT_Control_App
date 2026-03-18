@@ -1,6 +1,7 @@
-cmake_minimum_required(VERSION 3.16)
+﻿cmake_minimum_required(VERSION 3.16)
 
 project(HOT_Control_App VERSION 1.0 LANGUAGES CXX)
+option(HOT_TARGET_GT730 "Build for GT 730 / Kepler (CUDA sm_35)" ON)
 
 option(HOT_ENABLE_TEMP_GS_PROFILING "Enable temporary GS runtime profiling/logging instrumentation" ON)
 option(HOT_ENABLE_OPENCL_GS "Enable OpenCV OpenCL GS backend" ON)
@@ -22,6 +23,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidge
 set(OpenCV_DIR "C:/opencv/build")
 find_package(OpenCV REQUIRED)
 
+# Enable CUDA GS backend if requested
 set(HOT_ENABLE_CUDA_GS_AVAILABLE OFF)
 if (HOT_ENABLE_CUDA_GS)
     if (CUDA_TOOLKIT_ROOT_DIR)
@@ -29,8 +31,46 @@ if (HOT_ENABLE_CUDA_GS)
     endif()
     find_package(CUDAToolkit QUIET)
     if (CUDAToolkit_FOUND)
-        enable_language(CUDA)
-        set(HOT_ENABLE_CUDA_GS_AVAILABLE ON)
+        set(HOT_CUDA_ARCH_DEFAULT 75)
+        set(HOT_ENABLE_CUDA_GS_SUPPORTED ON)
+
+        if (MSVC AND CUDAToolkit_BIN_DIR)
+            get_filename_component(HOT_CUDA_TOOLKIT_ROOT "${CUDAToolkit_BIN_DIR}" DIRECTORY)
+            set(CMAKE_VS_PLATFORM_TOOLSET_CUDA "${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}" CACHE STRING "CUDA toolset version used by the Visual Studio generator" FORCE)
+            set(CMAKE_VS_PLATFORM_TOOLSET_CUDA_CUSTOM_DIR "${HOT_CUDA_TOOLKIT_ROOT}" CACHE PATH "CUDA toolkit used by the Visual Studio generator" FORCE)
+            message(STATUS "Using Visual Studio CUDA toolkit ${CMAKE_VS_PLATFORM_TOOLSET_CUDA} from ${CMAKE_VS_PLATFORM_TOOLSET_CUDA_CUSTOM_DIR}")
+        endif()
+
+        if (MSVC AND CUDAToolkit_VERSION_MAJOR EQUAL 11 AND MSVC_VERSION GREATER_EQUAL 1930)
+            message(WARNING "Note: CUDA ${CUDAToolkit_VERSION} does not support the active MSVC toolset (${MSVC_VERSION}) well enough for this build. Disabling CUDA GS backend for this configuration. Use a VS 2019 compatible toolset, an older MSVC toolset, or build with HOT_ENABLE_CUDA_GS=OFF.")
+            set(HOT_ENABLE_CUDA_GS_SUPPORTED OFF)
+        endif()
+
+        if (HOT_TARGET_GT730)
+            if (CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
+                message(WARNING "Note: CUDA ${CUDAToolkit_VERSION} detected. HOT_TARGET_GT730=ON requires sm_35 support, which was removed in CUDA 12.0. Disabling CUDA GS backend for this build. Use CUDA 11.x for GT730 CUDA support, or set HOT_ENABLE_CUDA_GS=OFF.")
+                set(HOT_ENABLE_CUDA_GS_SUPPORTED OFF)
+            else()
+                set(HOT_CUDA_ARCH_DEFAULT 35)
+            endif()
+        endif()
+
+        if (HOT_ENABLE_CUDA_GS_SUPPORTED)
+            if (HOT_TARGET_GT730)
+                # GT730 path requires Kepler architecture.
+                set(CMAKE_CUDA_ARCHITECTURES 35 CACHE STRING "CUDA architecture" FORCE)
+            elseif ((NOT CMAKE_CUDA_ARCHITECTURES) OR (CMAKE_CUDA_ARCHITECTURES STREQUAL "35"))
+                # If GT730 mode is off, avoid carrying a stale sm_35 cache value.
+                set(CMAKE_CUDA_ARCHITECTURES 75 CACHE STRING "CUDA architecture" FORCE)
+            endif()
+
+            if (HOT_TARGET_GT730)
+                message(STATUS "HOT_TARGET_GT730=ON: using CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+            endif()
+
+            enable_language(CUDA)
+            set(HOT_ENABLE_CUDA_GS_AVAILABLE ON)
+        endif()
     else()
         message(STATUS "HOT_ENABLE_CUDA_GS=ON but CUDA toolkit not found. Building without CUDA GS backend.")
     endif()
@@ -40,6 +80,7 @@ endif()
 set(SOURCES
     src/main.cpp
     src/ui/mainwindow.cpp
+    src/ui/computebenchmarkdialog.cpp
     src/ui/settingsdialog.cpp
     src/ui/sourceintensitydialog.cpp
     src/camera/cameramanager.cpp
@@ -62,6 +103,7 @@ endif()
 # Define header files
 set(HEADERS
     src/ui/mainwindow.h
+    src/ui/computebenchmarkdialog.h
     src/ui/settingsdialog.h
     src/ui/sourceintensitydialog.h
     src/camera/cameramanager.h
@@ -88,6 +130,29 @@ set(RESOURCES
 
 # Create the executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${RESOURCES})
+
+# Ensure MSVC reports the correct __cplusplus value (Qt requires it).
+if (MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>
+        $<$<COMPILE_LANGUAGE:CXX>:/permissive->
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:__cplusplus>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/permissive->
+    )
+
+    if (HOT_ENABLE_CUDA_GS_AVAILABLE AND CUDAToolkit_VERSION_MAJOR EQUAL 11)
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:--allow-unsupported-compiler>
+        )
+    endif()
+
+    # Nvcc sometimes drops the flag; append defensively at the directory level.
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=/Zc:__cplusplus -Xcompiler=/permissive-")
+
+    if (HOT_ENABLE_CUDA_GS_AVAILABLE AND CUDAToolkit_VERSION_MAJOR EQUAL 11)
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --allow-unsupported-compiler")
+    endif()
+endif()
 
 if (HOT_ENABLE_TEMP_GS_PROFILING)
     target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_TEMP_GS_PROFILING=1)

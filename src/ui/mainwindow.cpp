@@ -2,6 +2,7 @@
 #include "settingsdialog.h"
 #include "hologramdialog.h"
 #include "sourceintensitydialog.h"
+#include "computebenchmarkdialog.h"
 #include "components/targetgridwidget.h"
 #include "components/patternpresetswidget.h"
 #include "components/arrowspinbox.h"
@@ -285,6 +286,9 @@ void MainWindow::createMenus() {
     QMenu *toolsMenu = menuBar()->addMenu("&Tools");
     QAction *holoAction = toolsMenu->addAction("Create Hologram...");
     connect(holoAction, &QAction::triggered, this, &MainWindow::openHologramGenerator);
+
+    QAction *benchmarkAction = toolsMenu->addAction("Compute Benchmark...");
+    connect(benchmarkAction, &QAction::triggered, this, &MainWindow::openBenchmarkDialog);
 
     monitorSelectionMenu = toolsMenu->addMenu("Select Monitor");
     monitorActionGroup = new QActionGroup(this);
@@ -714,6 +718,13 @@ void MainWindow::openHologramGenerator() {
     connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
     connect(&dialog, &HologramDialog::sendToSLMRequested, this, &MainWindow::sendHologramToSLM);
     dialog.exec();
+}
+
+void MainWindow::openBenchmarkDialog() {
+    // Use current device selections so the dialog defaults match the active backend choices.
+    auto *dlg = new ComputeBenchmarkDialog(openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose, true);
+    dlg->show();
 }
 
 void MainWindow::openSourceIntensityDialog() {

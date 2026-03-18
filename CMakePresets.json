@@ -1,0 +1,72 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base-vs2022",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "Qt6_DIR": "C:/Qt/6.10.2/msvc2022_64/lib/cmake/Qt6"
+      },
+      "environment": {
+        "QTFRAMEWORK_BYPASS_LICENSE_CHECK": "1"
+      }
+    },
+    {
+      "name": "release-default",
+      "displayName": "Release (Default)",
+      "inherits": "base-vs2022",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "HOT_ENABLE_CUDA_GS": "OFF",
+        "HOT_TARGET_GT730": "ON"
+      }
+    },
+    {
+      "name": "release-gt730-cuda",
+      "displayName": "Release (GT730 CUDA 11.2 + v142)",
+      "inherits": "base-vs2022",
+      "binaryDir": "${sourceDir}/build_gt730_combo",
+      "toolset": "v142,cuda=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.2",
+      "cacheVariables": {
+        "Qt6_DIR": "C:/Qt/6.7.3/msvc2019_64/lib/cmake/Qt6",
+        "HOT_ENABLE_CUDA_GS": "ON",
+        "HOT_TARGET_GT730": "ON",
+        "CUDA_TOOLKIT_ROOT_DIR": "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.2",
+        "CMAKE_CUDA_ARCHITECTURES": "35"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-release-default",
+      "displayName": "Build Release (Default)",
+      "configurePreset": "release-default",
+      "configuration": "Release",
+      "targets": [
+        "HOT_Control_App"
+      ],
+      "environment": {
+        "QTFRAMEWORK_BYPASS_LICENSE_CHECK": "1"
+      }
+    },
+    {
+      "name": "build-release-gt730-cuda",
+      "displayName": "Build Release (GT730 CUDA)",
+      "configurePreset": "release-gt730-cuda",
+      "configuration": "Release",
+      "targets": [
+        "HOT_Control_App"
+      ],
+      "environment": {
+        "QTFRAMEWORK_BYPASS_LICENSE_CHECK": "1"
+      }
+    }
+  ]
+}

@@ -3,19 +3,16 @@
 #include <cuda_runtime.h>
 #include <cufft.h>
 
-#include <QImage>
-#include <QString>
-#include <QVector>
-
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
+#include <cstdio>
 
 namespace {
-
-constexpr double kTwoPi = 6.28318530717958647692;
 
 struct CudaKey {
     int deviceIndex = -1;
@@ -79,7 +76,7 @@ struct CudaResources {
 std::mutex gCudaCacheMutex;
 std::map<CudaKey, std::shared_ptr<CudaResources>> gCudaCache;
 
-QString cufftErrorToString(cufftResult status) {
+std::string cufftErrorToString(cufftResult status) {
     switch (status) {
     case CUFFT_SUCCESS:
         return "CUFFT_SUCCESS";
@@ -101,12 +98,16 @@ QString cufftErrorToString(cufftResult status) {
         return "CUFFT_INVALID_SIZE";
     case CUFFT_UNALIGNED_DATA:
         return "CUFFT_UNALIGNED_DATA";
+#ifdef CUFFT_INCOMPLETE_PARAMETER_LIST
     case CUFFT_INCOMPLETE_PARAMETER_LIST:
         return "CUFFT_INCOMPLETE_PARAMETER_LIST";
+#endif
     case CUFFT_INVALID_DEVICE:
         return "CUFFT_INVALID_DEVICE";
+#ifdef CUFFT_PARSE_ERROR
     case CUFFT_PARSE_ERROR:
         return "CUFFT_PARSE_ERROR";
+#endif
     case CUFFT_NO_WORKSPACE:
         return "CUFFT_NO_WORKSPACE";
     case CUFFT_NOT_IMPLEMENTED:
@@ -114,46 +115,47 @@ QString cufftErrorToString(cufftResult status) {
     case CUFFT_NOT_SUPPORTED:
         return "CUFFT_NOT_SUPPORTED";
     default:
-        return QString("CUFFT_ERROR_%1").arg(static_cast<int>(status));
+        char buf[64];
+        snprintf(buf, sizeof(buf), "CUFFT_ERROR_%d", static_cast<int>(status));
+        return std::string(buf);
     }
 }
 
-QString cudaErrorToString(cudaError_t status) {
-    return QString("%1 (%2)")
-        .arg(QString::fromUtf8(cudaGetErrorString(status)))
-        .arg(static_cast<int>(status));
+std::string cudaErrorToString(cudaError_t status) {
+    const char *errStr = cudaGetErrorString(status);
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s (%d)", errStr ? errStr : "unknown error", static_cast<int>(status));
+    return std::string(buf);
 }
 
-bool checkCuda(cudaError_t status, const char *context, QString &error) {
+bool checkCuda(cudaError_t status, const char *context, std::string &error) {
     if (status == cudaSuccess) {
         return true;
     }
-    error = QString("%1 failed: %2").arg(context).arg(cudaErrorToString(status));
+    error = std::string(context) + " failed: " + cudaErrorToString(status);
     return false;
 }
 
-bool checkCufft(cufftResult status, const char *context, QString &error) {
+bool checkCufft(cufftResult status, const char *context, std::string &error) {
     if (status == CUFFT_SUCCESS) {
         return true;
     }
-    error = QString("%1 failed: %2").arg(context).arg(cufftErrorToString(status));
+    error = std::string(context) + " failed: " + cufftErrorToString(status);
     return false;
 }
 
-QString formatCudaDeviceName(int deviceIndex, const cudaDeviceProp &prop) {
+std::string formatCudaDeviceName(int deviceIndex, const cudaDeviceProp &prop) {
     const double memoryGiB = static_cast<double>(prop.totalGlobalMem) / (1024.0 * 1024.0 * 1024.0);
-    return QString("[D%1] %2 (CC %3.%4, %5 GiB)")
-        .arg(deviceIndex)
-        .arg(QString::fromUtf8(prop.name))
-        .arg(prop.major)
-        .arg(prop.minor)
-        .arg(QString::number(memoryGiB, 'f', 2));
+    char buf[512];
+    snprintf(buf, sizeof(buf), "[D%d] %s (CC %d.%d, %.2f GiB)",
+             deviceIndex, prop.name, prop.major, prop.minor, memoryGiB);
+    return std::string(buf);
 }
 
 bool selectCudaDevice(int requestedIndex,
                       int &selectedIndex,
-                      QString &selectedName,
-                      QString &error) {
+                      std::string &selectedName,
+                      std::string &error) {
     int deviceCount = 0;
     if (!checkCuda(cudaGetDeviceCount(&deviceCount), "cudaGetDeviceCount", error)) {
         return false;
@@ -169,9 +171,10 @@ bool selectCudaDevice(int requestedIndex,
 
     if (requestedIndex >= 0) {
         if (requestedIndex >= deviceCount) {
-            error = QString("Selected CUDA device D%1 is unavailable. Device count: %2.")
-                        .arg(requestedIndex)
-                        .arg(deviceCount);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Selected CUDA device D%d is unavailable. Device count: %d.", 
+                     requestedIndex, deviceCount);
+            error = std::string(buf);
             return false;
         }
         cudaDeviceProp selectedProp {};
@@ -181,10 +184,10 @@ bool selectCudaDevice(int requestedIndex,
             return false;
         }
         if (!isCompatible(selectedProp)) {
-            error = QString("Selected CUDA device D%1 is not compatible (CC %2.%3).")
-                        .arg(requestedIndex)
-                        .arg(selectedProp.major)
-                        .arg(selectedProp.minor);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Selected CUDA device D%d is not compatible (CC %d.%d).", 
+                     requestedIndex, selectedProp.major, selectedProp.minor);
+            error = std::string(buf);
             return false;
         }
 
@@ -216,7 +219,7 @@ bool selectCudaDevice(int requestedIndex,
 std::shared_ptr<CudaResources> acquireCudaResources(int deviceIndex,
                                                     int width,
                                                     int height,
-                                                    QString &error) {
+                                                    std::string &error) {
     const CudaKey key {deviceIndex, width, height};
 
     {
@@ -277,36 +280,6 @@ std::shared_ptr<CudaResources> acquireCudaResources(int deviceIndex,
         gCudaCache[key] = resources;
     }
     return resources;
-}
-
-double wrapPhaseRad(double phase) {
-    double wrapped = std::fmod(phase, kTwoPi);
-    if (wrapped < 0.0) {
-        wrapped += kTwoPi;
-    }
-    return wrapped;
-}
-
-void populateResultPhaseImage(const QVector<float> &phaseRad,
-                              int width,
-                              int height,
-                              GSAlgorithm::GSResult &result) {
-    result.wrappedPhaseRad.resize(width * height);
-    result.phaseMask8Bit = QImage(width, height, QImage::Format_Grayscale8);
-
-    for (int y = 0; y < height; ++y) {
-        uchar *row = result.phaseMask8Bit.scanLine(y);
-        const int rowBase = y * width;
-        for (int x = 0; x < width; ++x) {
-            const int idx = rowBase + x;
-            const double wrapped = wrapPhaseRad(static_cast<double>(phaseRad[idx]));
-            result.wrappedPhaseRad[idx] = wrapped;
-
-            const double scaled = (wrapped / kTwoPi) * 255.0;
-            const int gray = std::clamp(static_cast<int>(scaled), 0, 255);
-            row[x] = static_cast<uchar>(gray);
-        }
-    }
 }
 
 __global__ void buildSlmFieldKernel(const float *sourceAmplitude,
@@ -385,7 +358,7 @@ __global__ void extractPhaseKernel(const cufftComplex *slmField,
 
 bool runKernelSequence(const std::shared_ptr<CudaResources> &resources,
                        int iterations,
-                       QString &error) {
+                       std::string &error) {
     if (!resources) {
         error = "Internal CUDA resources are null.";
         return false;
@@ -445,9 +418,9 @@ bool runKernelSequence(const std::shared_ptr<CudaResources> &resources,
         }
 
         applyTargetConstraintKernel<<<gridSize, blockSize>>>(resources->dComplexB,
-                                                             resources->dTargetAmplitude,
-                                                             resources->dComplexA,
-                                                             pixelCount);
+                                                              resources->dTargetAmplitude,
+                                                              resources->dComplexA,
+                                                              pixelCount);
         if (!checkCuda(cudaGetLastError(), "applyTargetConstraintKernel launch", error)) {
             return false;
         }
@@ -499,8 +472,8 @@ bool runKernelSequence(const std::shared_ptr<CudaResources> &resources,
 
 namespace GSAlgorithm::CudaBackend {
 
-QVector<GSCudaDeviceInfo> enumerateCudaDevicesNative() {
-    QVector<GSCudaDeviceInfo> out;
+std::vector<GSCudaDeviceInfoNative> enumerateCudaDevicesNative() {
+    std::vector<GSCudaDeviceInfoNative> out;
 
     int deviceCount = 0;
     cudaError_t countStatus = cudaGetDeviceCount(&deviceCount);
@@ -517,24 +490,22 @@ QVector<GSCudaDeviceInfo> enumerateCudaDevicesNative() {
             continue;
         }
 
-        GSCudaDeviceInfo info;
+        GSCudaDeviceInfoNative info;
         info.deviceIndex = i;
         info.isCompatible = (prop.major >= 3);
         info.displayName = formatCudaDeviceName(i, prop);
-        out.append(info);
+        out.push_back(info);
     }
 
     return out;
 }
 
-GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
-                                      const QVector<float> &sourceAmplitude,
-                                      const QVector<float> &targetAmplitude,
-                                      const QVector<float> &initialPhaseRad,
-                                      const GSResult &baseResult) {
-    GSResult result = baseResult;
-    result.backendUsed = GSComputeBackendUsed::CUDA;
-
+GSCudaResultNative runGerchbergSaxtonCudaNative(const GSCudaConfigNative &config,
+                                                const std::vector<float> &sourceAmplitude,
+                                                const std::vector<float> &targetAmplitude,
+                                                const std::vector<float> &initialPhaseRad) {
+    GSCudaResultNative result;
+    
     const int width = config.slmWidth;
     const int height = config.slmHeight;
     const int pixelCount = width * height;
@@ -542,24 +513,24 @@ GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
         result.error = "Invalid SLM dimensions for CUDA backend.";
         return result;
     }
-    if (sourceAmplitude.size() != pixelCount ||
-        targetAmplitude.size() != pixelCount ||
-        initialPhaseRad.size() != pixelCount) {
+    if (static_cast<int>(sourceAmplitude.size()) != pixelCount ||
+        static_cast<int>(targetAmplitude.size()) != pixelCount ||
+        static_cast<int>(initialPhaseRad.size()) != pixelCount) {
         result.error = "CUDA GS input buffers do not match SLM dimensions.";
         return result;
     }
 
-    QString selectError;
+    std::string selectError;
     int selectedDeviceIndex = -1;
-    QString selectedDeviceName;
+    std::string selectedDeviceName;
     if (!selectCudaDevice(config.cudaDeviceIndex, selectedDeviceIndex, selectedDeviceName, selectError)) {
         result.error = selectError;
         return result;
     }
 
-    result.backendInfo = QString("CUDA %1").arg(selectedDeviceName);
+    result.backendInfo = "CUDA " + selectedDeviceName;
 
-    QString error;
+    std::string error;
     if (!checkCuda(cudaSetDevice(selectedDeviceIndex), "cudaSetDevice(selected)", error)) {
         result.error = error;
         return result;
@@ -567,13 +538,13 @@ GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
 
     std::shared_ptr<CudaResources> resources = acquireCudaResources(selectedDeviceIndex, width, height, error);
     if (!resources) {
-        result.error = error.isEmpty() ? "Failed to initialize CUDA GS resources." : error;
+        result.error = error.empty() ? "Failed to initialize CUDA GS resources." : error;
         return result;
     }
 
     const size_t floatBytes = static_cast<size_t>(pixelCount) * sizeof(float);
     if (!checkCuda(cudaMemcpy(resources->dSourceAmplitude,
-                              sourceAmplitude.constData(),
+                              sourceAmplitude.data(),
                               floatBytes,
                               cudaMemcpyHostToDevice),
                    "cudaMemcpy(sourceAmplitude)",
@@ -582,7 +553,7 @@ GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
         return result;
     }
     if (!checkCuda(cudaMemcpy(resources->dTargetAmplitude,
-                              targetAmplitude.constData(),
+                              targetAmplitude.data(),
                               floatBytes,
                               cudaMemcpyHostToDevice),
                    "cudaMemcpy(targetAmplitude)",
@@ -591,7 +562,7 @@ GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
         return result;
     }
     if (!checkCuda(cudaMemcpy(resources->dPhase,
-                              initialPhaseRad.constData(),
+                              initialPhaseRad.data(),
                               floatBytes,
                               cudaMemcpyHostToDevice),
                    "cudaMemcpy(initialPhase)",
@@ -601,12 +572,12 @@ GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
     }
 
     if (!runKernelSequence(resources, config.iterations, error)) {
-        result.error = QString("CUDA GS kernel pipeline failed: %1").arg(error);
+        result.error = "CUDA GS kernel pipeline failed: " + error;
         return result;
     }
 
-    QVector<float> phaseOut(pixelCount, 0.0f);
-    if (!checkCuda(cudaMemcpy(phaseOut.data(),
+    result.phaseOut.assign(pixelCount, 0.0f);
+    if (!checkCuda(cudaMemcpy(result.phaseOut.data(),
                               resources->dPhase,
                               floatBytes,
                               cudaMemcpyDeviceToHost),
@@ -616,7 +587,6 @@ GSResult runGerchbergSaxtonCudaNative(const GSConfig &config,
         return result;
     }
 
-    populateResultPhaseImage(phaseOut, width, height, result);
     result.success = true;
     return result;
 }
