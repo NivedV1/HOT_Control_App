@@ -47,7 +47,45 @@ struct PatternRequest {
     bool centerGridAtOrigin = true;
 };
 
+enum class AnimationPreset {
+    Circle,
+    Triangle
+};
+
+struct AnimationRequest {
+    AnimationPreset preset = AnimationPreset::Circle;
+    int fps = 30;
+    int frameCount = 60;
+    int particleCount = 24;
+    bool realtime = true;
+
+    // Shared transforms
+    double xShift = 0.0;
+    double yShift = 0.0;
+
+    // Circle animation parameters
+    double circleRadiusFrom = 80.0;
+    double circleRadiusTo = 180.0;
+
+    // Triangle animation parameters
+    double triangleScaleFrom = 80.0;
+    double triangleScaleTo = 180.0;
+    double triangleRotationFromDeg = 0.0;
+    double triangleRotationToDeg = 360.0;
+};
+
+struct AnimationFrameParams {
+    int frameIndex = 0;
+    double t = 0.0;
+    double radius = 0.0;
+    double scale = 0.0;
+    double rotationDeg = 0.0;
+};
+
 QVector<QPointF> generate(const PatternRequest &request);
+AnimationFrameParams makeAnimationFrameParams(const AnimationRequest &request, int frameIndex);
+PatternRequest makeAnimationFrameRequest(const AnimationRequest &request, int frameIndex);
+QVector<QVector<QPointF>> generateAnimationFrames(const AnimationRequest &request);
 
 } // namespace PatternGenerator
 

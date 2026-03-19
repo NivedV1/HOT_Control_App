@@ -133,6 +133,10 @@ QVector<QPointF> applyShift(const QVector<QPointF> &points, double xShift, doubl
     return shifted;
 }
 
+double lerp(double from, double to, double t) {
+    return from + (to - from) * t;
+}
+
 } // namespace
 
 namespace PatternGenerator {
@@ -287,6 +291,58 @@ QVector<QPointF> generate(const PatternRequest &request) {
     }
 
     return points;
+}
+
+AnimationFrameParams makeAnimationFrameParams(const AnimationRequest &request, int frameIndex) {
+    AnimationFrameParams params;
+    const int frameCount = qMax(1, request.frameCount);
+    const int clampedIndex = qBound(0, frameIndex, frameCount - 1);
+    const double t = (frameCount <= 1)
+        ? 0.0
+        : static_cast<double>(clampedIndex) / static_cast<double>(frameCount - 1);
+
+    params.frameIndex = clampedIndex;
+    params.t = t;
+    params.radius = lerp(request.circleRadiusFrom, request.circleRadiusTo, t);
+    params.scale = lerp(request.triangleScaleFrom, request.triangleScaleTo, t);
+    params.rotationDeg = lerp(request.triangleRotationFromDeg, request.triangleRotationToDeg, t);
+    return params;
+}
+
+PatternRequest makeAnimationFrameRequest(const AnimationRequest &request, int frameIndex) {
+    const AnimationFrameParams params = makeAnimationFrameParams(request, frameIndex);
+
+    PatternRequest frameRequest;
+    frameRequest.pointCount = qMax(1, request.particleCount);
+    frameRequest.xShift = request.xShift;
+    frameRequest.yShift = request.yShift;
+
+    switch (request.preset) {
+    case AnimationPreset::Circle:
+        frameRequest.preset = Preset::Circle;
+        frameRequest.radius = qMax(0.0, params.radius);
+        frameRequest.rotationDeg = 0.0;
+        break;
+    case AnimationPreset::Triangle:
+    default:
+        frameRequest.preset = Preset::Triangle;
+        frameRequest.symmetric = true;
+        frameRequest.scale = qMax(0.0, params.scale);
+        frameRequest.rotationDeg = params.rotationDeg;
+        break;
+    }
+
+    return frameRequest;
+}
+
+QVector<QVector<QPointF>> generateAnimationFrames(const AnimationRequest &request) {
+    QVector<QVector<QPointF>> frames;
+    const int frameCount = qMax(1, request.frameCount);
+    frames.reserve(frameCount);
+    for (int i = 0; i < frameCount; ++i) {
+        frames.append(generate(makeAnimationFrameRequest(request, i)));
+    }
+    return frames;
 }
 
 } // namespace PatternGenerator

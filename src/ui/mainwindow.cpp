@@ -6,6 +6,7 @@
 #include "components/targetgridwidget.h"
 #include "components/patternpresetswidget.h"
 #include "components/arrowspinbox.h"
+#include "../core/patterngenerator.h"
 #include "../core/algorithms/gs_algorithm.h"
 #include "../camera/cameramanager.h"
 
@@ -14,9 +15,12 @@
 #include <QGridLayout>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QFrame>
 #include <QHeaderView>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QStackedWidget>
+#include <QScrollArea>
 #include <QSlider>
 #include <QCheckBox>
 #include <QFile>
@@ -116,6 +120,8 @@ QString targetModeLabelFromIndex(int index) {
         return "Image";
     case 3:
         return "Camera";
+    case 4:
+        return "Animation";
     default:
         return "Unknown";
     }
@@ -464,6 +470,120 @@ void MainWindow::createControls(QGridLayout *layout) {
     targetModeTabs->addTab(imageTab, "Image");
     targetModeTabs->addTab(new QWidget(), "Camera");
 
+    animationTab = new QWidget();
+    QVBoxLayout *animationTabLayout = new QVBoxLayout(animationTab);
+    animationTabLayout->setContentsMargins(0, 0, 0, 0);
+    animationTabLayout->setSpacing(0);
+
+    animationScrollArea = new QScrollArea(animationTab);
+    animationScrollArea->setWidgetResizable(true);
+    animationScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    animationScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    animationScrollArea->setFrameShape(QFrame::NoFrame);
+
+    animationContentWidget = new QWidget(animationScrollArea);
+    QVBoxLayout *animationLayout = new QVBoxLayout(animationContentWidget);
+    animationLayout->setContentsMargins(6, 6, 6, 6);
+    animationLayout->setSpacing(8);
+
+    QGroupBox *animationConfigGroup = new QGroupBox("Animation Settings");
+    QFormLayout *animationForm = new QFormLayout();
+    animationForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    animationForm->setFormAlignment(Qt::AlignTop);
+    animationForm->setVerticalSpacing(6);
+
+    animationPresetCombo = new QComboBox();
+    animationPresetCombo->addItems({"Circle", "Triangle"});
+
+    animationFpsSpin = new QSpinBox();
+    animationFpsSpin->setRange(1, 240);
+    animationFpsSpin->setValue(30);
+
+    animationFrameCountSpin = new QSpinBox();
+    animationFrameCountSpin->setRange(1, 1000);
+    animationFrameCountSpin->setValue(60);
+
+    animationParticlesSpin = new QSpinBox();
+    animationParticlesSpin->setRange(1, 2000);
+    animationParticlesSpin->setValue(24);
+
+    animationRealtimeCheck = new QCheckBox("Realtime");
+    animationRealtimeCheck->setChecked(true);
+
+    animationForm->addRow("Preset:", animationPresetCombo);
+    animationForm->addRow("Frame rate (FPS):", animationFpsSpin);
+    animationForm->addRow("No. of frames:", animationFrameCountSpin);
+    animationForm->addRow("No. of particles:", animationParticlesSpin);
+    animationForm->addRow("Mode:", animationRealtimeCheck);
+
+    animationParamsStack = new QStackedWidget();
+    animationParamsStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
+    animationParamsStack->setMinimumHeight(170);
+
+    QWidget *circleAnimPage = new QWidget();
+    QFormLayout *circleAnimForm = new QFormLayout(circleAnimPage);
+    circleAnimForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    circleAnimForm->setFormAlignment(Qt::AlignTop);
+    circleAnimForm->setVerticalSpacing(6);
+    animCircleRadiusFromSpin = new QDoubleSpinBox();
+    animCircleRadiusToSpin = new QDoubleSpinBox();
+    const double maxAnimRadius = qMax(1.0, static_cast<double>(qMin(camWidth, camHeight)) / 2.0);
+    animCircleRadiusFromSpin->setRange(1.0, maxAnimRadius);
+    animCircleRadiusToSpin->setRange(1.0, maxAnimRadius);
+    animCircleRadiusFromSpin->setValue(qMin(80.0, maxAnimRadius));
+    animCircleRadiusToSpin->setValue(qMin(180.0, maxAnimRadius));
+    circleAnimForm->addRow("Radius from:", animCircleRadiusFromSpin);
+    circleAnimForm->addRow("Radius to:", animCircleRadiusToSpin);
+
+    QWidget *triangleAnimPage = new QWidget();
+    QFormLayout *triangleAnimForm = new QFormLayout(triangleAnimPage);
+    triangleAnimForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    triangleAnimForm->setFormAlignment(Qt::AlignTop);
+    triangleAnimForm->setVerticalSpacing(6);
+    animTriangleScaleFromSpin = new QDoubleSpinBox();
+    animTriangleScaleToSpin = new QDoubleSpinBox();
+    animTriangleRotationFromSpin = new QDoubleSpinBox();
+    animTriangleRotationToSpin = new QDoubleSpinBox();
+    animTriangleScaleFromSpin->setRange(1.0, maxAnimRadius);
+    animTriangleScaleToSpin->setRange(1.0, maxAnimRadius);
+    animTriangleScaleFromSpin->setValue(qMin(80.0, maxAnimRadius));
+    animTriangleScaleToSpin->setValue(qMin(180.0, maxAnimRadius));
+    animTriangleRotationFromSpin->setRange(-3600.0, 3600.0);
+    animTriangleRotationToSpin->setRange(-3600.0, 3600.0);
+    animTriangleRotationFromSpin->setValue(0.0);
+    animTriangleRotationToSpin->setValue(360.0);
+    triangleAnimForm->addRow("Scale from:", animTriangleScaleFromSpin);
+    triangleAnimForm->addRow("Scale to:", animTriangleScaleToSpin);
+    triangleAnimForm->addRow("Rotation from (deg):", animTriangleRotationFromSpin);
+    triangleAnimForm->addRow("Rotation to (deg):", animTriangleRotationToSpin);
+
+    animationParamsStack->addWidget(circleAnimPage);
+    animationParamsStack->addWidget(triangleAnimPage);
+    animationForm->addRow("Preset params:", animationParamsStack);
+
+    animationConfigGroup->setLayout(animationForm);
+    animationConfigGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+
+    QHBoxLayout *animationButtons = new QHBoxLayout();
+    animationGenerateBtn = new QPushButton("Generate Sequence");
+    animationPlaySendBtn = new QPushButton("Play/Send");
+    animationStopBtn = new QPushButton("Stop");
+    animationResetBtn = new QPushButton("Reset");
+    animationStopBtn->setEnabled(false);
+    animationButtons->addWidget(animationGenerateBtn);
+    animationButtons->addWidget(animationPlaySendBtn);
+    animationButtons->addWidget(animationStopBtn);
+    animationButtons->addWidget(animationResetBtn);
+
+    animationLayout->addWidget(animationConfigGroup);
+    animationLayout->addLayout(animationButtons);
+    animationLayout->addStretch(1);
+
+    animationScrollArea->setWidget(animationContentWidget);
+    animationTabLayout->addWidget(animationScrollArea);
+
+    targetModeTabs->addTab(animationTab, "Animation");
+
     leftCol->addWidget(targetModeTabs);
 
     // Wrap bottom controls into a single widget for easy hide/show
@@ -575,6 +695,12 @@ void MainWindow::setupConnections() {
     connect(loadTargetImageBtn, &QPushButton::clicked, this, &MainWindow::loadTargetImage);
     connect(clearTargetImageBtn, &QPushButton::clicked, this, &MainWindow::clearTargetImage);
     connect(patternPresetsWidget, &PatternPresetsWidget::patternGenerated, this, &MainWindow::onPatternGenerated);
+    connect(animationPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onAnimationPresetChanged);
+    connect(animationGenerateBtn, &QPushButton::clicked, this, &MainWindow::onGenerateAnimationSequenceClicked);
+    connect(animationPlaySendBtn, &QPushButton::clicked, this, &MainWindow::onPlayAnimationClicked);
+    connect(animationStopBtn, &QPushButton::clicked, this, &MainWindow::onStopAnimationClicked);
+    connect(animationResetBtn, &QPushButton::clicked, this, &MainWindow::onResetAnimationClicked);
 
     connect(algorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onAlgorithmSelectionChanged);
@@ -634,7 +760,34 @@ void MainWindow::setupConnections() {
     gsAutoRunTimer->setInterval(kGsAutoRunDebounceMs);
     connect(gsAutoRunTimer, &QTimer::timeout, this, &MainWindow::onGsAutoRunTimeout);
 
+    animationTimer = new QTimer(this);
+    animationTimer->setSingleShot(false);
+    connect(animationTimer, &QTimer::timeout, this, &MainWindow::onAnimationTimerTimeout);
+
     updateAlgorithmSettingsUi();
+    onAnimationPresetChanged(animationPresetCombo ? animationPresetCombo->currentIndex() : 0);
+    updateAnimationControlsEnabledState();
+
+    if (animationPresetCombo && animationFpsSpin && animationFrameCountSpin && animationParticlesSpin &&
+        animationRealtimeCheck && animCircleRadiusFromSpin && animCircleRadiusToSpin &&
+        animTriangleScaleFromSpin && animTriangleScaleToSpin && animTriangleRotationFromSpin &&
+        animTriangleRotationToSpin && animationGenerateBtn && animationPlaySendBtn &&
+        animationStopBtn && animationResetBtn) {
+        QWidget::setTabOrder(animationPresetCombo, animationFpsSpin);
+        QWidget::setTabOrder(animationFpsSpin, animationFrameCountSpin);
+        QWidget::setTabOrder(animationFrameCountSpin, animationParticlesSpin);
+        QWidget::setTabOrder(animationParticlesSpin, animationRealtimeCheck);
+        QWidget::setTabOrder(animationRealtimeCheck, animCircleRadiusFromSpin);
+        QWidget::setTabOrder(animCircleRadiusFromSpin, animCircleRadiusToSpin);
+        QWidget::setTabOrder(animCircleRadiusToSpin, animTriangleScaleFromSpin);
+        QWidget::setTabOrder(animTriangleScaleFromSpin, animTriangleScaleToSpin);
+        QWidget::setTabOrder(animTriangleScaleToSpin, animTriangleRotationFromSpin);
+        QWidget::setTabOrder(animTriangleRotationFromSpin, animTriangleRotationToSpin);
+        QWidget::setTabOrder(animTriangleRotationToSpin, animationGenerateBtn);
+        QWidget::setTabOrder(animationGenerateBtn, animationPlaySendBtn);
+        QWidget::setTabOrder(animationPlaySendBtn, animationStopBtn);
+        QWidget::setTabOrder(animationStopBtn, animationResetBtn);
+    }
 }
 
 // ==========================================
@@ -712,6 +865,25 @@ void MainWindow::openSettingsDialog() {
         if (patternPresetsWidget) {
             patternPresetsWidget->setCameraResolution(camWidth, camHeight);
         }
+        const double maxAnimRadius = qMax(1.0, static_cast<double>(qMin(camWidth, camHeight)) / 2.0);
+        if (animCircleRadiusFromSpin) {
+            animCircleRadiusFromSpin->setRange(1.0, maxAnimRadius);
+            animCircleRadiusFromSpin->setValue(qMin(animCircleRadiusFromSpin->value(), maxAnimRadius));
+        }
+        if (animCircleRadiusToSpin) {
+            animCircleRadiusToSpin->setRange(1.0, maxAnimRadius);
+            animCircleRadiusToSpin->setValue(qMin(animCircleRadiusToSpin->value(), maxAnimRadius));
+        }
+        if (animTriangleScaleFromSpin) {
+            animTriangleScaleFromSpin->setRange(1.0, maxAnimRadius);
+            animTriangleScaleFromSpin->setValue(qMin(animTriangleScaleFromSpin->value(), maxAnimRadius));
+        }
+        if (animTriangleScaleToSpin) {
+            animTriangleScaleToSpin->setRange(1.0, maxAnimRadius);
+            animTriangleScaleToSpin->setValue(qMin(animTriangleScaleToSpin->value(), maxAnimRadius));
+        }
+        clearAnimationSequenceState(true);
+        updateAnimationControlsEnabledState();
 
         if (!loadedTargetImageOriginal.isNull()) {
             loadedTargetImageGray = loadedTargetImageOriginal.convertToFormat(QImage::Format_Grayscale8).scaled(
@@ -847,6 +1019,9 @@ void MainWindow::scheduleGsAutoRun() {
     if (!autoRunGsEnabled || !isGerchbergSaxtonSelected() || !gsAutoRunTimer) {
         return;
     }
+    if (animationRealtimeRunning || animationPlaybackRunning) {
+        return;
+    }
 
     if (gridPointData.isEmpty()) {
         gsAutoRunTimer->stop();
@@ -869,6 +1044,9 @@ void MainWindow::autoSendToSlmIfEnabled() {
 }
 void MainWindow::onGsAutoRunTimeout() {
     if (!autoRunGsEnabled || !isGerchbergSaxtonSelected()) {
+        return;
+    }
+    if (animationRealtimeRunning || animationPlaybackRunning) {
         return;
     }
 
@@ -1047,6 +1225,95 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
     autoSendToSlmIfEnabled();
     return true;
 }
+
+bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
+                                      int iterationsOverride,
+                                      QImage &outMask,
+                                      QString *errorOut) {
+    if (!isGerchbergSaxtonSelected()) {
+        if (errorOut) {
+            *errorOut = "Gerchberg-Saxton is required for animation playback.";
+        }
+        return false;
+    }
+
+    if (points.isEmpty()) {
+        if (errorOut) {
+            *errorOut = "Animation frame has no target points.";
+        }
+        return false;
+    }
+
+    const int expectedSourceSize = slmWidth * slmHeight;
+    const bool usingDefaultSource = sourceIntensityMap.size() != expectedSourceSize;
+    const QVector<float> sourceAmplitude = usingDefaultSource ? defaultGsSourceAmplitude() : sourceIntensityMap;
+
+    QVector<GSAlgorithm::GSTargetPoint> targets;
+    targets.reserve(points.size());
+    for (const QPointF &p : points) {
+        GSAlgorithm::GSTargetPoint target;
+        target.xCamPx = p.x();
+        target.yCamPx = p.y();
+        targets.append(target);
+    }
+
+    GSAlgorithm::GSConfig config;
+    config.slmWidth = slmWidth;
+    config.slmHeight = slmHeight;
+    config.slmPixelSizeUm = slmPixelSize;
+    config.camWidth = camWidth;
+    config.camHeight = camHeight;
+    config.camPixelSizeUm = camPixelSize;
+    config.wavelengthNm = laserWavelength;
+    config.focalLengthMm = fourierFocalLength;
+    config.iterations = qMax(1, iterationsOverride);
+    switch (gsComputeBackendMode) {
+    case 1:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CPU;
+        break;
+    case 2:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::OpenCL;
+        break;
+    case 3:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CUDA;
+        break;
+    case 0:
+    default:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::Auto;
+        break;
+    }
+    config.openClPlatformIndex = openClPlatformIndex;
+    config.openClDeviceIndex = openClDeviceIndex;
+    config.cudaDeviceIndex = cudaDeviceIndex;
+
+    switch (gsStartingPhaseMaskMode) {
+    case 1:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
+        break;
+    case 2:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::RandomPhase;
+        break;
+    case 0:
+    default:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::Checkerboard;
+        break;
+    }
+
+    const GSAlgorithm::GSResult result = GSAlgorithm::runGerchbergSaxton(config, sourceAmplitude, targets);
+    if (!result.success) {
+        if (errorOut) {
+            *errorOut = result.error;
+        }
+        return false;
+    }
+
+    outMask = result.phaseMask8Bit.convertToFormat(QImage::Format_Grayscale8);
+    if (outMask.size() != QSize(slmWidth, slmHeight)) {
+        outMask = outMask.scaled(slmWidth, slmHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    return true;
+}
+
 void MainWindow::onSendToSlmRequested() {
     if (isGerchbergSaxtonSelected() && !gridPointData.isEmpty()) {
         if (!generateAlgorithmMask(true, GsRunTrigger::SendToSlmPreRun)) {
@@ -1315,6 +1582,364 @@ void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
     }
 }
 
+void MainWindow::onAnimationPresetChanged(int index) {
+    if (animationParamsStack) {
+        const int pageCount = animationParamsStack->count();
+        if (pageCount <= 0) {
+            return;
+        }
+        const int safeIndex = (index >= 0 && index < pageCount) ? index : 0;
+        animationParamsStack->setCurrentIndex(safeIndex);
+        animationParamsStack->updateGeometry();
+    }
+
+    if (animationContentWidget) {
+        animationContentWidget->adjustSize();
+    }
+
+    if (animationScrollArea && animationParamsStack) {
+        animationScrollArea->ensureWidgetVisible(animationParamsStack, 0, 24);
+    }
+}
+
+void MainWindow::onGenerateAnimationSequenceClicked() {
+    if (!buildAnimationSequenceFromUi(true)) {
+        return;
+    }
+
+    animationIterationsSnapshot = iterationsSpin ? iterationsSpin->value() : 20;
+    animationCurrentFrameIndex = 0;
+    animationComputeLimitedWarned = false;
+
+    if (!animationFramePoints.isEmpty()) {
+        updateAnimationPreviewLabels(animationFramePoints.first());
+        replaceGridWithPoints(animationFramePoints.first());
+    }
+
+    animationPrecomputeReady = false;
+    animationPrecomputedMasks.clear();
+
+    if (animationRealtimeCheck && !animationRealtimeCheck->isChecked()) {
+        if (!precomputeAnimationMasks(true)) {
+            return;
+        }
+    }
+
+    animationSequenceReady = true;
+    animationParticlesSpin->setEnabled(false);
+    updateAnimationControlsEnabledState();
+
+    statusBar()->showMessage(
+        QString("Animation sequence generated (%1 frames, %2 particles, iterations snapshot: %3).")
+            .arg(animationFramePoints.size())
+            .arg(animationParticlesSpin ? animationParticlesSpin->value() : 0)
+            .arg(animationIterationsSnapshot),
+        5000);
+}
+
+void MainWindow::onPlayAnimationClicked() {
+    if (!animationSequenceReady || animationFramePoints.isEmpty()) {
+        if (!buildAnimationSequenceFromUi(true)) {
+            return;
+        }
+        animationIterationsSnapshot = iterationsSpin ? iterationsSpin->value() : 20;
+        animationSequenceReady = true;
+    }
+
+    const bool realtime = animationRealtimeCheck && animationRealtimeCheck->isChecked();
+    if (!realtime && !animationPrecomputeReady) {
+        if (!precomputeAnimationMasks(true)) {
+            return;
+        }
+    }
+
+    animationCurrentFrameIndex = 0;
+    animationComputeLimitedWarned = false;
+    animationRealtimeRunning = realtime;
+    animationPlaybackRunning = !realtime;
+    animationParticlesSpin->setEnabled(false);
+
+    if (animationTimer) {
+        animationTimer->setInterval(animationTimerIntervalMs());
+        animationTimer->start();
+    }
+    updateAnimationControlsEnabledState();
+
+    QString playbackMsg = realtime
+        ? "Animation realtime playback started."
+        : "Animation precomputed playback started.";
+    if (!autoSendSlmEnabled) {
+        playbackMsg += " Auto-send SLM is OFF, so frames update preview only.";
+    }
+    statusBar()->showMessage(playbackMsg, 4000);
+}
+
+void MainWindow::onStopAnimationClicked() {
+    if (animationTimer) {
+        animationTimer->stop();
+    }
+    animationRealtimeRunning = false;
+    animationPlaybackRunning = false;
+    animationParticlesSpin->setEnabled(true);
+    clearAnimationSequenceState(false);
+    updateAnimationControlsEnabledState();
+    statusBar()->showMessage("Animation stopped.", 3000);
+}
+
+void MainWindow::onResetAnimationClicked() {
+    if (animationTimer) {
+        animationTimer->stop();
+    }
+    animationRealtimeRunning = false;
+    animationPlaybackRunning = false;
+    animationParticlesSpin->setEnabled(true);
+    clearAnimationSequenceState(true);
+    updateAnimationControlsEnabledState();
+    statusBar()->showMessage("Animation reset.", 3000);
+}
+
+void MainWindow::onAnimationTimerTimeout() {
+    if (!animationSequenceReady || animationFramePoints.isEmpty()) {
+        if (animationTimer) {
+            animationTimer->stop();
+        }
+        animationRealtimeRunning = false;
+        animationPlaybackRunning = false;
+        updateAnimationControlsEnabledState();
+        return;
+    }
+
+    if (animationCurrentFrameIndex >= animationFramePoints.size()) {
+        if (animationTimer) {
+            animationTimer->stop();
+        }
+        animationRealtimeRunning = false;
+        animationPlaybackRunning = false;
+        updateAnimationControlsEnabledState();
+        statusBar()->showMessage("Animation playback finished.", 3000);
+        return;
+    }
+
+    const QVector<QPointF> &points = animationFramePoints.at(animationCurrentFrameIndex);
+    updateAnimationPreviewLabels(points);
+    replaceGridWithPoints(points);
+
+    if (animationRealtimeRunning) {
+        QElapsedTimer frameTimer;
+        frameTimer.start();
+
+        QImage frameMask;
+        QString error;
+        if (!runGsForTargetPoints(points, animationIterationsSnapshot, frameMask, &error)) {
+            if (animationTimer) {
+                animationTimer->stop();
+            }
+            animationRealtimeRunning = false;
+            animationPlaybackRunning = false;
+            updateAnimationControlsEnabledState();
+            QMessageBox::warning(this, "Animation GS", error.isEmpty() ? "Failed to generate GS frame." : error);
+            return;
+        }
+
+        currentMask = frameMask;
+        updatePhasePreview();
+        if (autoSendSlmEnabled) {
+            sendToSLM();
+        }
+
+        const int elapsed = static_cast<int>(frameTimer.elapsed());
+        const int budget = animationTimerIntervalMs();
+        if (!animationComputeLimitedWarned && elapsed > budget) {
+            animationComputeLimitedWarned = true;
+            statusBar()->showMessage(
+                QString("Realtime animation is compute-limited (%1 ms frame time > %2 ms interval).")
+                    .arg(elapsed)
+                    .arg(budget),
+                6000);
+        }
+    } else if (animationPlaybackRunning) {
+        if (animationCurrentFrameIndex < animationPrecomputedMasks.size()) {
+            currentMask = animationPrecomputedMasks.at(animationCurrentFrameIndex);
+            updatePhasePreview();
+            if (autoSendSlmEnabled) {
+                sendToSLM();
+            }
+        }
+    }
+
+    ++animationCurrentFrameIndex;
+}
+
+int MainWindow::animationTimerIntervalMs() const {
+    const int fps = animationFpsSpin ? qMax(1, animationFpsSpin->value()) : 30;
+    return qMax(1, static_cast<int>(1000.0 / static_cast<double>(fps)));
+}
+
+void MainWindow::updateAnimationControlsEnabledState() {
+    const bool running = animationRealtimeRunning || animationPlaybackRunning;
+    if (animationGenerateBtn) {
+        animationGenerateBtn->setEnabled(!running);
+    }
+    if (animationPlaySendBtn) {
+        animationPlaySendBtn->setEnabled(!running && animationSequenceReady);
+    }
+    if (animationStopBtn) {
+        animationStopBtn->setEnabled(running);
+    }
+    if (animationPresetCombo) {
+        animationPresetCombo->setEnabled(!running);
+    }
+    if (animationFpsSpin) {
+        animationFpsSpin->setEnabled(!running);
+    }
+    if (animationFrameCountSpin) {
+        animationFrameCountSpin->setEnabled(!running);
+    }
+    if (animationRealtimeCheck) {
+        animationRealtimeCheck->setEnabled(!running);
+    }
+}
+
+QImage MainWindow::buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle) const {
+    QImage image(camWidth, camHeight, QImage::Format_RGB32);
+    image.fill(Qt::black);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QColor color = cameraStyle ? QColor(80, 190, 255) : QColor(255, 255, 255);
+    painter.setPen(QPen(color, cameraStyle ? 2.0 : 1.0));
+    painter.setBrush(QBrush(cameraStyle ? QColor(80, 190, 255, 110) : QColor(255, 255, 255, 200)));
+
+    const double halfW = static_cast<double>(camWidth) / 2.0;
+    const double halfH = static_cast<double>(camHeight) / 2.0;
+    const int radius = cameraStyle ? qMax(3, qMin(camWidth, camHeight) / 90) : qMax(2, qMin(camWidth, camHeight) / 120);
+
+    for (const QPointF &p : points) {
+        const QPointF imagePoint(halfW + p.x(), halfH - p.y());
+        const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), camWidth - 1);
+        const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), camHeight - 1);
+        painter.drawEllipse(QPoint(px, py), radius, radius);
+    }
+
+    return image;
+}
+
+void MainWindow::updateAnimationPreviewLabels(const QVector<QPointF> &points) {
+    if (animationIntensityPreviewLabel) {
+        const QImage intensityImg = buildAnimationPreviewImage(points, false);
+        animationIntensityPreviewLabel->setPixmap(QPixmap::fromImage(intensityImg).scaled(
+            animationIntensityPreviewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+    if (animationCameraPreviewLabel) {
+        const QImage cameraImg = buildAnimationPreviewImage(points, true);
+        animationCameraPreviewLabel->setPixmap(QPixmap::fromImage(cameraImg).scaled(
+            animationCameraPreviewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+}
+
+bool MainWindow::buildAnimationSequenceFromUi(bool showWarnings) {
+    if (!animationPresetCombo || !animationFrameCountSpin || !animationParticlesSpin) {
+        return false;
+    }
+
+    PatternGenerator::AnimationRequest request;
+    request.fps = animationFpsSpin ? animationFpsSpin->value() : 30;
+    request.frameCount = animationFrameCountSpin->value();
+    request.particleCount = animationParticlesSpin->value();
+    request.realtime = animationRealtimeCheck && animationRealtimeCheck->isChecked();
+
+    if (animationPresetCombo->currentIndex() == 0) {
+        request.preset = PatternGenerator::AnimationPreset::Circle;
+        request.circleRadiusFrom = animCircleRadiusFromSpin ? animCircleRadiusFromSpin->value() : 80.0;
+        request.circleRadiusTo = animCircleRadiusToSpin ? animCircleRadiusToSpin->value() : 180.0;
+    } else {
+        request.preset = PatternGenerator::AnimationPreset::Triangle;
+        request.triangleScaleFrom = animTriangleScaleFromSpin ? animTriangleScaleFromSpin->value() : 80.0;
+        request.triangleScaleTo = animTriangleScaleToSpin ? animTriangleScaleToSpin->value() : 180.0;
+        request.triangleRotationFromDeg = animTriangleRotationFromSpin ? animTriangleRotationFromSpin->value() : 0.0;
+        request.triangleRotationToDeg = animTriangleRotationToSpin ? animTriangleRotationToSpin->value() : 360.0;
+    }
+
+    QVector<QVector<QPointF>> frames = PatternGenerator::generateAnimationFrames(request);
+    if (frames.isEmpty()) {
+        if (showWarnings) {
+            QMessageBox::warning(this, "Animation", "Failed to generate animation frame points.");
+        }
+        return false;
+    }
+
+    animationFramePoints = frames;
+    animationCurrentFrameIndex = 0;
+    animationSequenceReady = true;
+    animationPrecomputeReady = false;
+    animationPrecomputedMasks.clear();
+    return true;
+}
+
+bool MainWindow::precomputeAnimationMasks(bool showWarnings) {
+    if (!animationSequenceReady || animationFramePoints.isEmpty()) {
+        if (showWarnings) {
+            QMessageBox::warning(this, "Animation", "Generate an animation sequence first.");
+        }
+        return false;
+    }
+
+    animationPrecomputedMasks.clear();
+    animationPrecomputedMasks.reserve(animationFramePoints.size());
+
+    const int iterSnapshot = animationIterationsSnapshot > 0
+        ? animationIterationsSnapshot
+        : (iterationsSpin ? iterationsSpin->value() : 20);
+    animationIterationsSnapshot = iterSnapshot;
+
+    animationParticlesSpin->setEnabled(false);
+    for (int i = 0; i < animationFramePoints.size(); ++i) {
+        QImage frameMask;
+        QString error;
+        if (!runGsForTargetPoints(animationFramePoints.at(i), iterSnapshot, frameMask, &error)) {
+            animationPrecomputedMasks.clear();
+            animationPrecomputeReady = false;
+            animationParticlesSpin->setEnabled(true);
+            if (showWarnings) {
+                QMessageBox::warning(this,
+                                     "Animation Precompute",
+                                     QString("Failed at frame %1/%2: %3")
+                                         .arg(i + 1)
+                                         .arg(animationFramePoints.size())
+                                         .arg(error.isEmpty() ? "GS frame generation failed." : error));
+            }
+            return false;
+        }
+        animationPrecomputedMasks.append(frameMask);
+    }
+
+    animationPrecomputeReady = true;
+    statusBar()->showMessage(
+        QString("Precomputed %1 phase masks for animation playback.").arg(animationPrecomputedMasks.size()),
+        5000);
+    return true;
+}
+
+void MainWindow::clearAnimationSequenceState(bool clearPreviews) {
+    animationFramePoints.clear();
+    animationPrecomputedMasks.clear();
+    animationCurrentFrameIndex = 0;
+    animationSequenceReady = false;
+    animationPrecomputeReady = false;
+    animationComputeLimitedWarned = false;
+
+    if (clearPreviews) {
+        if (animationIntensityPreviewLabel) {
+            animationIntensityPreviewLabel->clear();
+            animationIntensityPreviewLabel->setText("No frame");
+        }
+        if (animationCameraPreviewLabel) {
+            animationCameraPreviewLabel->clear();
+            animationCameraPreviewLabel->setText("No frame");
+        }
+    }
+}
+
 void MainWindow::toggleTheme() {
     isDarkMode = !isDarkMode;
     applyTheme(isDarkMode);
@@ -1325,28 +1950,80 @@ void MainWindow::toggleTheme() {
 }
 
 void MainWindow::applyTheme(bool dark) {
-    const QString themeName = dark ? "theme.qss" : "light_theme.qss";
-    const QStringList diskCandidates = {
-        QDir(QCoreApplication::applicationDirPath()).filePath("resources/" + themeName),
-        QDir(QCoreApplication::applicationDirPath()).filePath("../resources/" + themeName),
-        QDir(QCoreApplication::applicationDirPath()).filePath("../../resources/" + themeName),
-        QDir::current().filePath("resources/" + themeName)
-    };
     QString styleSheet;
-    for (const QString &candidate : diskCandidates) {
-        QFile diskFile(candidate);
-        if (diskFile.exists() && diskFile.open(QFile::ReadOnly | QFile::Text)) {
-            styleSheet = QTextStream(&diskFile).readAll();
-            diskFile.close();
-            break;
+    if (dark) {
+        // Keep dark mode intentionally minimal/stable to avoid startup crashes caused by
+        // aggressive QSS sub-control overrides on some Windows/Qt combinations.
+        styleSheet = R"(
+QMainWindow, QWidget {
+    background-color: #2b2b2b;
+    color: #e0e0e0;
+    font-family: Arial, sans-serif;
+    font-size: 10pt;
+}
+QGroupBox {
+    border: 1px solid #555;
+    border-radius: 4px;
+    margin-top: 1ex;
+}
+QPushButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
+    background-color: #3c3f41;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 4px;
+}
+QTabWidget::pane {
+    border: 1px solid #555;
+    background: #3c3f41;
+}
+QTabBar::tab {
+    background: #2b2b2b;
+    border: 1px solid #555;
+    padding: 6px 12px;
+}
+QTabBar::tab:selected {
+    background: #4b4d4f;
+    font-weight: bold;
+}
+QMenuBar, QMenu {
+    background-color: #2b2b2b;
+}
+QStatusBar {
+    background-color: #2b2b2b;
+    border-top: 1px solid #444;
+}
+#cameraFeedLabel, #phaseMaskLabel {
+    background-color: black;
+    color: white;
+    border: 1px solid #444;
+}
+QGraphicsView {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+}
+)";
+    } else {
+        const QString themeName = "light_theme.qss";
+        const QStringList diskCandidates = {
+            QDir(QCoreApplication::applicationDirPath()).filePath("resources/" + themeName),
+            QDir(QCoreApplication::applicationDirPath()).filePath("../resources/" + themeName),
+            QDir(QCoreApplication::applicationDirPath()).filePath("../../resources/" + themeName),
+            QDir::current().filePath("resources/" + themeName)
+        };
+        for (const QString &candidate : diskCandidates) {
+            QFile diskFile(candidate);
+            if (diskFile.exists() && diskFile.open(QFile::ReadOnly | QFile::Text)) {
+                styleSheet = QTextStream(&diskFile).readAll();
+                diskFile.close();
+                break;
+            }
         }
-    }
-    if (styleSheet.isEmpty()) {
-        const QString qrcTheme = dark ? ":/theme.qss" : ":/light_theme.qss";
-        QFile qrcFile(qrcTheme);
-        if (qrcFile.open(QFile::ReadOnly | QFile::Text)) {
-            styleSheet = QTextStream(&qrcFile).readAll();
-            qrcFile.close();
+        if (styleSheet.isEmpty()) {
+            QFile qrcFile(":/light_theme.qss");
+            if (qrcFile.open(QFile::ReadOnly | QFile::Text)) {
+                styleSheet = QTextStream(&qrcFile).readAll();
+                qrcFile.close();
+            }
         }
     }
     if (!styleSheet.isEmpty()) {

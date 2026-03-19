@@ -29,6 +29,8 @@ class QSpinBox;
 class QDoubleSpinBox;
 class QTimer;
 class QWidget;
+class QStackedWidget;
+class QScrollArea;
 class TargetGridWidget;
 class PatternPresetsWidget;
 
@@ -84,6 +86,12 @@ private slots:
     void onGridPointRemoved(int pointId);
     void onGridPointSelected(int pointId);
     void onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details);
+    void onAnimationPresetChanged(int index);
+    void onGenerateAnimationSequenceClicked();
+    void onPlayAnimationClicked();
+    void onStopAnimationClicked();
+    void onResetAnimationClicked();
+    void onAnimationTimerTimeout();
 
 private:
     enum SlmOutputMode {
@@ -136,6 +144,14 @@ private:
     bool generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger);
     QVector<float> defaultGsSourceAmplitude() const;
     bool isGerchbergSaxtonSelected() const;
+    bool runGsForTargetPoints(const QVector<QPointF> &points, int iterationsOverride, QImage &outMask, QString *errorOut = nullptr);
+    void updateAnimationControlsEnabledState();
+    void updateAnimationPreviewLabels(const QVector<QPointF> &points);
+    QImage buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle) const;
+    bool buildAnimationSequenceFromUi(bool showWarnings);
+    bool precomputeAnimationMasks(bool showWarnings);
+    void clearAnimationSequenceState(bool clearPreviews);
+    int animationTimerIntervalMs() const;
 
     // UI Pointers
     TargetGridWidget *targetGridWidget;
@@ -149,6 +165,27 @@ private:
     QPushButton *saveMaskBtn;
     QPushButton *addPointsBtn;
     QPushButton *clearAllPointsBtn;
+    QWidget *animationTab = nullptr;
+    QScrollArea *animationScrollArea = nullptr;
+    QWidget *animationContentWidget = nullptr;
+    QComboBox *animationPresetCombo = nullptr;
+    QStackedWidget *animationParamsStack = nullptr;
+    QSpinBox *animationFpsSpin = nullptr;
+    QSpinBox *animationFrameCountSpin = nullptr;
+    QSpinBox *animationParticlesSpin = nullptr;
+    QCheckBox *animationRealtimeCheck = nullptr;
+    QDoubleSpinBox *animCircleRadiusFromSpin = nullptr;
+    QDoubleSpinBox *animCircleRadiusToSpin = nullptr;
+    QDoubleSpinBox *animTriangleScaleFromSpin = nullptr;
+    QDoubleSpinBox *animTriangleScaleToSpin = nullptr;
+    QDoubleSpinBox *animTriangleRotationFromSpin = nullptr;
+    QDoubleSpinBox *animTriangleRotationToSpin = nullptr;
+    QLabel *animationIntensityPreviewLabel = nullptr;
+    QLabel *animationCameraPreviewLabel = nullptr;
+    QPushButton *animationGenerateBtn = nullptr;
+    QPushButton *animationPlaySendBtn = nullptr;
+    QPushButton *animationStopBtn = nullptr;
+    QPushButton *animationResetBtn = nullptr;
 
     // Algorithm controls
     QComboBox *algorithmCombo = nullptr;
@@ -230,6 +267,16 @@ private:
 
     // Auto-run timer
     QTimer *gsAutoRunTimer = nullptr;
+    QTimer *animationTimer = nullptr;
+    QVector<QVector<QPointF>> animationFramePoints;
+    QVector<QImage> animationPrecomputedMasks;
+    int animationCurrentFrameIndex = 0;
+    int animationIterationsSnapshot = 20;
+    bool animationSequenceReady = false;
+    bool animationPrecomputeReady = false;
+    bool animationRealtimeRunning = false;
+    bool animationPlaybackRunning = false;
+    bool animationComputeLimitedWarned = false;
 
     // Grid point data
     QMap<int, QPointF> gridPointData;
