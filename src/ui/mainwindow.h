@@ -171,6 +171,7 @@ private:
     double sourceBeamWaistPx = 0.0;
 
     QLabel *cameraFeedLabel;
+    QCheckBox *overlayTargetCb = nullptr;
     QComboBox *camSelect;
     QPushButton *camStartBtn;
     QPushButton *camStopBtn;
@@ -189,6 +190,9 @@ private:
     int camWidth = 1920;
     int camHeight = 1080;
     double camPixelSize = 5.0;
+    int cameraViewRotationDegrees = 0;
+    QString udpBindIp = "0.0.0.0";
+    int udpPort = 9000;
     double laserWavelength = 1064.0;
     double fourierFocalLength = 100.0;
     bool isDarkMode = true;
@@ -233,6 +237,7 @@ private:
     bool suppressGridStatusMessages = false;
     QString lastGeneratedPatternSummary;
     QString lastGeneratedPatternDetails;
+    QImage lastCameraFrame;
 };
 
 #endif // MAINWINDOW_H

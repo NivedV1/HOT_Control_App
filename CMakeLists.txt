@@ -192,6 +192,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ${OpenCV_LIBS}
 )
 
+if (WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+endif()
+
 if (HOT_ENABLE_CUDA_GS_AVAILABLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         CUDA::cudart

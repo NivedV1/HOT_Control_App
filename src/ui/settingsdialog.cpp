@@ -7,6 +7,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QStandardItemModel>
 #include <QStringList>
 #include <QVBoxLayout>
@@ -14,6 +15,7 @@
 
 SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                int camW, int camH, double camPix,
+                               const QString &udpBindIp, int udpPort,
                                double wave, double focal, int slmOutputMode,
                                bool autoRunGsEnabled,
                                bool autoSendSlmEnabled,
@@ -169,18 +171,25 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     QFormLayout *camForm = new QFormLayout();
 
     cameraBackendCombo = new QComboBox(this);
-    cameraBackendCombo->addItems({"Qt Native (WMF)", "OpenCV (DirectShow)"});
-    cameraBackendCombo->setCurrentIndex(backend);
+    cameraBackendCombo->addItems({"Qt Native (WMF)", "OpenCV (DirectShow)", "UDP Stream (Ethernet)"});
+    cameraBackendCombo->setCurrentIndex(qBound(0, backend, 2));
 
     camWidthSpin = new ArrowSpinBox(this); camWidthSpin->setRange(100, 8000); camWidthSpin->setValue(camW);
     camHeightSpin = new ArrowSpinBox(this); camHeightSpin->setRange(100, 8000); camHeightSpin->setValue(camH);
     camPixelSpin = new ArrowDoubleSpinBox(this); camPixelSpin->setRange(0.1, 100.0); camPixelSpin->setDecimals(2);
     camPixelSpin->setSuffix(" um"); camPixelSpin->setValue(camPix);
+    udpBindIpEdit = new QLineEdit(this);
+    udpBindIpEdit->setPlaceholderText("0.0.0.0");
+    udpBindIpEdit->setText(udpBindIp.isEmpty() ? QStringLiteral("0.0.0.0") : udpBindIp);
+    udpPortSpin = new ArrowSpinBox(this); udpPortSpin->setRange(1, 65535); udpPortSpin->setValue(qBound(1, udpPort, 65535));
 
     camForm->addRow("Camera Engine:", cameraBackendCombo);
     camForm->addRow("Camera Width (px):", camWidthSpin);
     camForm->addRow("Camera Height (px):", camHeightSpin);
     camForm->addRow("Camera Pixel Size:", camPixelSpin);
+    camForm->addRow(new QLabel("<b>UDP Stream Settings</b>", this));
+    camForm->addRow("UDP Bind IP:", udpBindIpEdit);
+    camForm->addRow("UDP Port:", udpPortSpin);
     camGroup->setLayout(camForm);
 
     // --- 3. OPTICAL SETUP ---
@@ -223,6 +232,11 @@ int SettingsDialog::getCameraBackend() const { return cameraBackendCombo->curren
 int SettingsDialog::getCamWidth() const { return camWidthSpin->value(); }
 int SettingsDialog::getCamHeight() const { return camHeightSpin->value(); }
 double SettingsDialog::getCamPixelSize() const { return camPixelSpin->value(); }
+QString SettingsDialog::getUdpBindIp() const {
+    const QString value = udpBindIpEdit->text().trimmed();
+    return value.isEmpty() ? QStringLiteral("0.0.0.0") : value;
+}
+int SettingsDialog::getUdpPort() const { return udpPortSpin->value(); }
 
 // Optical Getters
 double SettingsDialog::getWavelength() const { return waveSpin->value(); }

@@ -41,6 +41,7 @@
 #include <QScreen>
 #include <QWindow>
 #include <QTimer>
+#include <QStyle>
 
 namespace {
 constexpr int kImageTabIndex = 2;
@@ -53,6 +54,17 @@ constexpr int kGsAutoRunDebounceMs = 180;
 
 QString hardwareConfigPath() {
     return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
+}
+
+int normalizeCameraRotation(int degrees) {
+    int normalized = degrees % 360;
+    if (normalized < 0) {
+        normalized += 360;
+    }
+    if (normalized == 0 || normalized == 90 || normalized == 180 || normalized == 270) {
+        return normalized;
+    }
+    return 0;
 }
 
 #if HOT_ENABLE_TEMP_GS_PROFILING
@@ -181,10 +193,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     slmHeight = settings.value("Hardware/SLM_Height", 1080).toInt();
     slmPixelSize = settings.value("Hardware/SLM_PixelSize", 8.0).toDouble();
     cameraBackend = settings.value("Hardware/CameraBackend", 0).toInt();
+    if (cameraBackend < 0 || cameraBackend > 2) {
+        cameraBackend = 0;
+    }
 
     camWidth = settings.value("Hardware/Cam_Width", 1920).toInt();
     camHeight = settings.value("Hardware/Cam_Height", 1080).toInt();
     camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
+    cameraViewRotationDegrees = normalizeCameraRotation(settings.value("Hardware/Camera_ViewRotation", 0).toInt());
+    udpBindIp = settings.value("Hardware/UDP_BindIP", "0.0.0.0").toString();
+    udpPort = settings.value("Hardware/UDP_Port", 9000).toInt();
     laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
     fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
     autoRunGsEnabled = settings.value("Hardware/AutoRunGS", false).toBool();
@@ -207,7 +225,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
     applyTheme(isDarkMode);
 
-    camManager = new CameraManager(cameraBackend, this);
+    camManager = new CameraManager(cameraBackend, udpBindIp, static_cast<quint16>(udpPort), this);
     setupConnections();
 
     // Load SLM DLL safely
@@ -314,10 +332,11 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     titleBarLayout->addStretch();
     
     gridMaxMinBtn = new QPushButton();
-    gridMaxMinBtn->setText("[Ã¢â€ â€˜]");  // Maximize symbol (up arrow)
+    gridMaxMinBtn->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
     gridMaxMinBtn->setMaximumWidth(28);
     gridMaxMinBtn->setMaximumHeight(20);
-    gridMaxMinBtn->setStyleSheet("padding: 0px; font-size: 12px;");
+    gridMaxMinBtn->setToolTip("Enlarge grid view");
+    gridMaxMinBtn->setStyleSheet("padding: 0px;");
     titleBarLayout->addWidget(gridMaxMinBtn);
     gridTitleBar->setLayout(titleBarLayout);
     gridTitleBar->setObjectName("gridTitleBar");
@@ -380,7 +399,9 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     fpsLabel = new QLabel("FPS: 0");
     camTools->addWidget(fpsLabel);
     camTools->addStretch();
-    camTools->addWidget(new QCheckBox("Overlay Target"));
+    overlayTargetCb = new QCheckBox("Overlay Target");
+    overlayTargetCb->setChecked(false);
+    camTools->addWidget(overlayTargetCb);
     
     cameraColLayout->addLayout(camTools);
     cameraColumn->setLayout(cameraColLayout);
@@ -577,6 +598,9 @@ void MainWindow::setupConnections() {
         selectedPointId = -1;
         lastGeneratedPatternSummary.clear();
         lastGeneratedPatternDetails.clear();
+        if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
     });
 
     connect(camSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), camManager, &CameraManager::changeCamera);
@@ -591,6 +615,11 @@ void MainWindow::setupConnections() {
     });
     connect(camManager, &CameraManager::recordingTimeUpdated, this, &MainWindow::onRecordingTimeUpdated);
     connect(camManager, &CameraManager::fpsUpdated, this, &MainWindow::onFPSUpdated);
+    connect(overlayTargetCb, &QCheckBox::toggled, this, [this](bool) {
+        if (!lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
+    });
 
     if (camSelect->count() > 0) camManager->changeCamera(0);
 
@@ -615,6 +644,7 @@ void MainWindow::setupConnections() {
 void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
+                          udpBindIp, udpPort,
                           laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled,
                           gsStartingPhaseMaskMode, gsComputeBackendMode, openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex, this);
 
@@ -632,6 +662,8 @@ void MainWindow::openSettingsDialog() {
         camWidth = dialog.getCamWidth();
         camHeight = dialog.getCamHeight();
         camPixelSize = dialog.getCamPixelSize();
+        udpBindIp = dialog.getUdpBindIp();
+        udpPort = dialog.getUdpPort();
         laserWavelength = dialog.getWavelength();
         fourierFocalLength = dialog.getFocalLength();
 
@@ -644,6 +676,8 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/Cam_Width", camWidth);
         settings.setValue("Hardware/Cam_Height", camHeight);
         settings.setValue("Hardware/Cam_PixelSize", camPixelSize);
+        settings.setValue("Hardware/UDP_BindIP", udpBindIp);
+        settings.setValue("Hardware/UDP_Port", udpPort);
         settings.setValue("Optical/Wavelength", laserWavelength);
         slmOutputMode = dialog.getSlmOutputMode();
         autoRunGsEnabled = dialog.getAutoRunGsEnabled();
@@ -702,6 +736,10 @@ void MainWindow::openSettingsDialog() {
             sourcePresetName.clear();
             sourceBeamWaistPx = 0.0;
             statusBar()->showMessage("SLM resolution changed. Source intensity invalidated; please re-apply Source Intensity.", 6000);
+        }
+
+        if (!backendChanged && camManager) {
+            camManager->setUdpConfig(udpBindIp, static_cast<quint16>(udpPort));
         }
 
         if (backendChanged) {
@@ -866,7 +904,7 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
     for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
         GSAlgorithm::GSTargetPoint target;
         target.xCamPx = it.value().x();
-        target.yCamPx = -it.value().y(); // Convert Qt grid Y to Cartesian (+Y up).
+        target.yCamPx = it.value().y();
         targets.append(target);
     }
 
@@ -1046,7 +1084,52 @@ void MainWindow::savePhaseMask() {
 }
 
 void MainWindow::updateCameraFeed(const QImage &img) {
-    cameraFeedLabel->setPixmap(QPixmap::fromImage(img).scaled(
+    if (img.isNull()) {
+        return;
+    }
+
+    lastCameraFrame = img.copy();
+    QImage displayImg = img.convertToFormat(QImage::Format_ARGB32);
+
+    if (cameraViewRotationDegrees != 0) {
+        QTransform transform;
+        transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
+    }
+
+    if (overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
+        QPainter painter(&displayImg);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const int imgW = displayImg.width();
+        const int imgH = displayImg.height();
+        const double halfW = imgW / 2.0;
+        const double halfH = imgH / 2.0;
+        const int pointRadius = qMax(3, qMin(imgW, imgH) / 90);
+        const int highlightRadius = pointRadius + 4;
+
+        for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
+            const int pointId = it.key();
+            const QPointF p = it.value();
+
+            // Grid is centered Cartesian (+Y up); image is top-left origin (+Y down).
+            const QPointF imagePoint(halfW + p.x(), halfH - p.y());
+            const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), imgW - 1);
+            const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), imgH - 1);
+
+            if (pointId == selectedPointId) {
+                painter.setPen(QPen(QColor(120, 255, 120, 190), 2));
+                painter.setBrush(QColor(120, 255, 120, 80));
+                painter.drawEllipse(QPoint(px, py), highlightRadius, highlightRadius);
+            }
+
+            painter.setPen(QPen(QColor(80, 190, 255, 210), 2));
+            painter.setBrush(QColor(80, 190, 255, 95));
+            painter.drawEllipse(QPoint(px, py), pointRadius, pointRadius);
+        }
+    }
+
+    cameraFeedLabel->setPixmap(QPixmap::fromImage(displayImg).scaled(
         cameraFeedLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
@@ -1139,6 +1222,9 @@ void MainWindow::onGridPointAdded(int pointId, QPointF pixelCoords) {
     }
 
     scheduleGsAutoRun();
+    if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+        updateCameraFeed(lastCameraFrame);
+    }
 }
 
 void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
@@ -1158,6 +1244,9 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
         lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)").arg(pointId).arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()), 2000);
         scheduleGsAutoRun();
+        if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
     }
 }
 
@@ -1177,6 +1266,9 @@ void MainWindow::onGridPointRemoved(int pointId) {
         lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 removed").arg(pointId), 2000);
         scheduleGsAutoRun();
+        if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
     }
 }
 
@@ -1192,6 +1284,9 @@ void MainWindow::onGridPointSelected(int pointId) {
     }
     
     statusBar()->showMessage(QString("Point #%1 selected (use arrow keys to move, Delete to remove)").arg(pointId), 3000);
+    if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+        updateCameraFeed(lastCameraFrame);
+    }
 }
 
 void MainWindow::onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details) {
@@ -1215,6 +1310,9 @@ void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
 
     suppressGridStatusMessages = false;
     scheduleGsAutoRun();
+    if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+        updateCameraFeed(lastCameraFrame);
+    }
 }
 
 void MainWindow::toggleTheme() {
@@ -1786,7 +1884,7 @@ void MainWindow::toggleGridEnlarged() {
         mainLayout->update();
         
         // Update button to show minimize symbol
-        gridMaxMinBtn->setText("[Ã¢â€ â€œ]");  // Minimize symbol (down arrow)
+        gridMaxMinBtn->setIcon(style()->standardIcon(QStyle::SP_TitleBarNormalButton));
         gridMaxMinBtn->setToolTip("Restore to normal view");
     } else {
         // Minimize grid - show all controls, restore grid position
@@ -1814,7 +1912,7 @@ void MainWindow::toggleGridEnlarged() {
         mainLayout->update();
         
         // Update button to show maximize symbol
-        gridMaxMinBtn->setText("[Ã¢â€ â€˜]");  // Maximize symbol (up arrow)
+        gridMaxMinBtn->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
         gridMaxMinBtn->setToolTip("Enlarge grid view");
     }
 }

@@ -5,14 +5,17 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QComboBox>
+#include <QString>
 
 class QCheckBox;
+class QLineEdit;
 
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
     SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                    int camW, int camH, double camPix,
+                   const QString &udpBindIp, int udpPort,
                    double wave, double focal, int slmOutputMode,
                    bool autoRunGsEnabled,
                    bool autoSendSlmEnabled,
@@ -33,6 +36,8 @@ public:
     int getCamWidth() const;
     int getCamHeight() const;
     double getCamPixelSize() const;
+    QString getUdpBindIp() const;
+    int getUdpPort() const;
 
     // Optical Getters
     double getWavelength() const;
@@ -68,6 +73,8 @@ private:
     QSpinBox *camWidthSpin;
     QSpinBox *camHeightSpin;
     QDoubleSpinBox *camPixelSpin;
+    QLineEdit *udpBindIpEdit;
+    QSpinBox *udpPortSpin;
 
     // Optics
     QDoubleSpinBox *waveSpin;

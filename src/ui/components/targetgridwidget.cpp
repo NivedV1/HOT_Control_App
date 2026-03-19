@@ -272,16 +272,16 @@ QPointF TargetGridWidget::pixelToScreen(QPointF pixelPos) const {
 }
 
 void TargetGridWidget::fitGridToView() {
-    // Fit the entire camera resolution grid to fill the view
+    // Fit the camera grid to fully fill the viewport.
+    // Use a Y-flipped transform so +Y is visually up and -Y is down.
     QRectF sceneRect = gridScene->sceneRect();
 
-    // Calculate scale factors to fill the viewport
+    // Calculate independent scale factors for full fill (no letterboxing).
     double scaleX = viewport()->width() / sceneRect.width();
     double scaleY = viewport()->height() / sceneRect.height();
-    double scale = qMin(scaleX, scaleY);
 
-    // Set the transform to fit and center
-    setTransform(QTransform::fromScale(scale, scale));
+    // Apply non-uniform scaling and invert Y.
+    setTransform(QTransform::fromScale(scaleX, -scaleY));
     centerOn(0, 0); // Center on the origin
 }
 
@@ -386,14 +386,14 @@ void TargetGridWidget::keyPressEvent(QKeyEvent *event) {
     switch (event->key()) {
         case Qt::Key_Up:
             if (selectedPoint) {
-                moveSelectedPoint(0, -delta);
+                moveSelectedPoint(0, delta);
                 event->accept();
                 return;
             }
             break;
         case Qt::Key_Down:
             if (selectedPoint) {
-                moveSelectedPoint(0, delta);
+                moveSelectedPoint(0, -delta);
                 event->accept();
                 return;
             }
@@ -498,39 +498,86 @@ void TargetGridWidget::drawBackground(QPainter *painter, const QRectF &rect) {
     painter->drawRect(-halfWidth, -halfHeight, cameraWidth, cameraHeight);
 
     // Draw corner labels with Cartesian coordinates (four quadrants)
-    painter->setPen(QPen(textColor));
-    painter->setFont(QFont("Arial", 9, QFont::Bold));
+    auto drawUprightText = [&](const QRectF &sceneTextRect, int flags, const QString &text, const QFont &font) {
+        const QPoint viewTopLeft = mapFromScene(sceneTextRect.topLeft());
+        const QPoint viewBottomRight = mapFromScene(sceneTextRect.bottomRight());
+        QRect viewRect(viewTopLeft, viewBottomRight);
+        viewRect = viewRect.normalized();
+
+        painter->save();
+        painter->resetTransform();
+        painter->setPen(QPen(textColor));
+        painter->setFont(font);
+        painter->drawText(viewRect, flags, text);
+        painter->restore();
+    };
 
     int halfWidthInt = static_cast<int>(halfWidth);
     int halfHeightInt = static_cast<int>(halfHeight);
 
     // Top-left corner (Q2: negative X, positive Y)
-    painter->drawText(-halfWidthInt + 5, halfHeightInt - 20, 60, 20, Qt::AlignLeft | Qt::AlignTop,
-                     QString("(-%1, %2)").arg(halfWidthInt).arg(halfHeightInt));
+    drawUprightText(
+        QRectF(-halfWidthInt + 5, halfHeightInt - 20, 60, 20),
+        Qt::AlignLeft | Qt::AlignTop,
+        QString("(-%1, %2)").arg(halfWidthInt).arg(halfHeightInt),
+        QFont("Arial", 9, QFont::Bold));
 
     // Top-right corner (Q1: positive X, positive Y)
-    painter->drawText(halfWidthInt - 65, halfHeightInt - 20, 60, 20, Qt::AlignRight | Qt::AlignTop,
-                     QString("(%1, %2)").arg(halfWidthInt).arg(halfHeightInt));
+    drawUprightText(
+        QRectF(halfWidthInt - 65, halfHeightInt - 20, 60, 20),
+        Qt::AlignRight | Qt::AlignTop,
+        QString("(%1, %2)").arg(halfWidthInt).arg(halfHeightInt),
+        QFont("Arial", 9, QFont::Bold));
 
     // Bottom-left corner (Q3: negative X, negative Y)
-    painter->drawText(-halfWidthInt + 5, -halfHeightInt + 5, 60, 20, Qt::AlignLeft | Qt::AlignBottom,
-                     QString("(-%1, -%2)").arg(halfWidthInt).arg(halfHeightInt));
+    drawUprightText(
+        QRectF(-halfWidthInt + 5, -halfHeightInt + 5, 60, 20),
+        Qt::AlignLeft | Qt::AlignBottom,
+        QString("(-%1, -%2)").arg(halfWidthInt).arg(halfHeightInt),
+        QFont("Arial", 9, QFont::Bold));
 
     // Bottom-right corner (Q4: positive X, negative Y)
-    painter->drawText(halfWidthInt - 65, -halfHeightInt + 5, 60, 20, Qt::AlignRight | Qt::AlignBottom,
-                     QString("(%1, -%2)").arg(halfWidthInt).arg(halfHeightInt));
+    drawUprightText(
+        QRectF(halfWidthInt - 65, -halfHeightInt + 5, 60, 20),
+        Qt::AlignRight | Qt::AlignBottom,
+        QString("(%1, -%2)").arg(halfWidthInt).arg(halfHeightInt),
+        QFont("Arial", 9, QFont::Bold));
 
     // Origin label
-    painter->setFont(QFont("Arial", 8));
-    painter->drawText(-20, -15, 40, 20, Qt::AlignCenter, "(0, 0)");
+    drawUprightText(
+        QRectF(-20, -15, 40, 20),
+        Qt::AlignCenter,
+        "(0, 0)",
+        QFont("Arial", 8));
 
     // Draw axis labels
-    painter->setFont(QFont("Arial", 8));
-    painter->setPen(QPen(isDarkMode ? QColor(120, 180, 255) : QColor(70, 130, 180)));
+    const QColor axisLabelColor = isDarkMode ? QColor(120, 180, 255) : QColor(70, 130, 180);
     // X-axis label at right
-    painter->drawText(halfWidthInt - 20, 8, 20, 16, Qt::AlignCenter, "X");
+    {
+        const QPoint viewTopLeft = mapFromScene(QPointF(halfWidthInt - 20, 8));
+        const QPoint viewBottomRight = mapFromScene(QPointF(halfWidthInt, 24));
+        QRect viewRect(viewTopLeft, viewBottomRight);
+        viewRect = viewRect.normalized();
+        painter->save();
+        painter->resetTransform();
+        painter->setPen(QPen(axisLabelColor));
+        painter->setFont(QFont("Arial", 8));
+        painter->drawText(viewRect, Qt::AlignCenter, "X");
+        painter->restore();
+    }
     // Y-axis label at top
-    painter->drawText(5, halfHeightInt - 15, 20, 16, Qt::AlignCenter, "Y");
+    {
+        const QPoint viewTopLeft = mapFromScene(QPointF(5, halfHeightInt - 15));
+        const QPoint viewBottomRight = mapFromScene(QPointF(25, halfHeightInt + 1));
+        QRect viewRect(viewTopLeft, viewBottomRight);
+        viewRect = viewRect.normalized();
+        painter->save();
+        painter->resetTransform();
+        painter->setPen(QPen(axisLabelColor));
+        painter->setFont(QFont("Arial", 8));
+        painter->drawText(viewRect, Qt::AlignCenter, "Y");
+        painter->restore();
+    }
 }
 
 void TargetGridWidget::updateGridDisplay() {

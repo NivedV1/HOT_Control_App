@@ -17,14 +17,26 @@
 // --- NEW: OpenCV Header ---
 #include <opencv2/opencv.hpp>
 
+class CameraStream;
+
 class CameraManager : public QObject {
     Q_OBJECT
 public:
-    explicit CameraManager(int engineBackend, QObject *parent = nullptr);
+    enum class CameraBackend {
+        QtNative = 0,
+        OpenCV = 1,
+        UdpStream = 2
+    };
+
+    explicit CameraManager(int engineBackend,
+                           const QString &udpBindIp,
+                           quint16 udpPort,
+                           QObject *parent = nullptr);
     ~CameraManager();
 
     // Returns strings instead of hardware devices so UI doesn't care which engine is running
-    QStringList getCameraNames() const; 
+    QStringList getCameraNames() const;
+    void setUdpConfig(const QString &bindIp, quint16 port);
 
 public slots:
     void changeCamera(int index);
@@ -44,9 +56,12 @@ private slots:
     void onQtFrameReceived(const QVideoFrame &frame);
     void calculateFPS();
     void processOpenCVFrame(); // NEW: Grabs the OpenCV frame
+    void onUdpFrameReceived(const QImage &frame, quint32 frameId);
+    void onUdpStatusMessage(const QString &message);
+    void checkUdpHealth();
 
 private:
-    int backend; // 0 = Qt, 1 = OpenCV
+    CameraBackend backend;
     int currentCamIndex = 0;
 
     // Qt Native Variables
@@ -60,9 +75,18 @@ private:
     // OpenCV Variables
     cv::VideoCapture cvCapture;
     cv::VideoWriter cvVideoWriter;
-    QTimer *cvTimer;
+    QTimer *cvTimer = nullptr;
     bool isRecordingCV = false;
     qint64 cvRecordStartTime = 0;
+
+    // UDP stream variables
+    CameraStream *udpStream = nullptr;
+    QString udpBindIp;
+    quint16 udpPort = 9000;
+    QImage lastUdpFrame;
+    qint64 lastUdpFrameMs = 0;
+    bool udpTimeoutReported = false;
+    QTimer *udpHealthTimer = nullptr;
 
     // FPS counting
     QTimer *fpsTimer;
