@@ -29,6 +29,7 @@ bool CameraStream::start(const QString &bindIpAddr, quint16 port) {
     frameBytes = width * height;
 
     frameBuffer.clear();
+    decodedBuffer.clear();
     chunkReceived.clear();
     expectedChunks = 0;
     chunksReceived = 0;
@@ -36,6 +37,8 @@ bool CameraStream::start(const QString &bindIpAddr, quint16 port) {
     droppedFrameCount = 0;
     completedFrameCount = 0;
     lastDropStatusMs = 0;
+    currentCodec = 0;
+    frameDataBytes = 0;
 
     running.store(true);
     receiveThread = std::thread(&CameraStream::receiveLoop, this);
@@ -98,8 +101,17 @@ bool CameraStream::handleFrameBoundary(const PacketHeader &header) {
     width = newWidth;
     height = newHeight;
     frameBytes = static_cast<int>(newBytes);
-    if (frameBuffer.size() != static_cast<size_t>(frameBytes)) {
-        frameBuffer.resize(static_cast<size_t>(frameBytes));
+    currentCodec = header.codec;
+    frameDataBytes = 0;
+
+    if (currentCodec == 0) {
+        if (frameBuffer.size() != static_cast<size_t>(frameBytes)) {
+            frameBuffer.resize(static_cast<size_t>(frameBytes));
+        }
+    } else if (currentCodec == 1) {
+        frameBuffer.clear();
+    } else {
+        return false;
     }
 
     currentFrameId = header.frameID;
@@ -109,6 +121,34 @@ bool CameraStream::handleFrameBoundary(const PacketHeader &header) {
     hasActiveFrame = true;
     std::fill(frameBuffer.begin(), frameBuffer.end(), 0);
     return true;
+}
+
+bool CameraStream::decodeRleToRaw(const std::vector<quint8> &encoded,
+                                  std::vector<quint8> &decoded,
+                                  int expectedBytes) const {
+    decoded.clear();
+    if (expectedBytes <= 0) {
+        return false;
+    }
+    decoded.reserve(static_cast<size_t>(expectedBytes));
+
+    size_t i = 0;
+    while (i + 1 < encoded.size()) {
+        const quint8 run = encoded[i];
+        const quint8 value = encoded[i + 1];
+        if (run == 0) {
+            return false;
+        }
+        if (decoded.size() + run > static_cast<size_t>(expectedBytes)) {
+            return false;
+        }
+        decoded.insert(decoded.end(), run, value);
+        i += 2;
+    }
+    if (i != encoded.size()) {
+        return false;
+    }
+    return decoded.size() == static_cast<size_t>(expectedBytes);
 }
 
 void CameraStream::receiveLoop() {
@@ -185,14 +225,48 @@ void CameraStream::receiveLoop() {
             break;
         }
 
-        if (bytesReceived < static_cast<int>(sizeof(PacketHeader))) {
+        if (bytesReceived < static_cast<int>(sizeof(LegacyPacketHeaderV2))) {
             continue;
         }
 
         PacketHeader header{};
-        std::memcpy(&header, recvBuffer, sizeof(PacketHeader));
+        int headerBytes = 0;
+        bool parsed = false;
 
-        const int payloadSize = bytesReceived - static_cast<int>(sizeof(PacketHeader));
+        if (bytesReceived >= static_cast<int>(sizeof(PacketHeader))) {
+            PacketHeader candidate{};
+            std::memcpy(&candidate, recvBuffer, sizeof(PacketHeader));
+
+            const bool codecValid = (candidate.codec <= 1);
+            const bool reservedValid = (candidate.reserved0 == 0 && candidate.reserved1 == 0);
+            const bool chunkShapeValid = (candidate.totalChunks > 0 && candidate.chunkIndex < candidate.totalChunks);
+            if (codecValid && reservedValid && chunkShapeValid) {
+                header = candidate;
+                headerBytes = static_cast<int>(sizeof(PacketHeader));
+                parsed = true;
+            }
+        }
+
+        if (!parsed) {
+            LegacyPacketHeaderV2 legacy{};
+            std::memcpy(&legacy, recvBuffer, sizeof(LegacyPacketHeaderV2));
+            if (legacy.totalChunks == 0 || legacy.chunkIndex >= legacy.totalChunks) {
+                continue;
+            }
+            header.width = legacy.width;
+            header.height = legacy.height;
+            header.codec = 0;
+            header.reserved0 = 0;
+            header.reserved1 = 0;
+            header.frameID = legacy.frameID;
+            header.chunkIndex = legacy.chunkIndex;
+            header.totalChunks = legacy.totalChunks;
+            header.chunkOffset = legacy.chunkOffset;
+            header.chunkSize = legacy.chunkSize;
+            headerBytes = static_cast<int>(sizeof(LegacyPacketHeaderV2));
+        }
+
+        const int payloadSize = bytesReceived - headerBytes;
         if (payloadSize <= 0) {
             continue;
         }
@@ -214,6 +288,10 @@ void CameraStream::receiveLoop() {
             continue;
         }
 
+        if (header.codec != currentCodec) {
+            continue;
+        }
+
         if (header.totalChunks != expectedChunks) {
             continue;
         }
@@ -226,25 +304,54 @@ void CameraStream::receiveLoop() {
             continue;
         }
 
-        if (header.chunkOffset >= static_cast<quint32>(frameBytes)) {
-            continue;
-        }
-
-        if ((header.chunkOffset + header.chunkSize) > static_cast<quint32>(frameBytes)) {
-            continue;
+        const quint64 chunkEnd = static_cast<quint64>(header.chunkOffset) + static_cast<quint64>(header.chunkSize);
+        if (currentCodec == 0) {
+            if (header.chunkOffset >= static_cast<quint32>(frameBytes)) {
+                continue;
+            }
+            if (chunkEnd > static_cast<quint64>(frameBytes)) {
+                continue;
+            }
+        } else {
+            if (chunkEnd > static_cast<quint64>(kMaxCompressedBytes)) {
+                continue;
+            }
+            if (chunkEnd > frameBuffer.size()) {
+                frameBuffer.resize(static_cast<size_t>(chunkEnd));
+            }
         }
 
         if (!chunkReceived[header.chunkIndex]) {
             std::memcpy(frameBuffer.data() + header.chunkOffset,
-                        recvBuffer + sizeof(PacketHeader),
+                        recvBuffer + headerBytes,
                         static_cast<size_t>(payloadSize));
             chunkReceived[header.chunkIndex] = true;
             chunksReceived++;
+            if (static_cast<int>(chunkEnd) > frameDataBytes) {
+                frameDataBytes = static_cast<int>(chunkEnd);
+            }
         }
 
         if (chunksReceived == expectedChunks) {
-            QImage frame(frameBuffer.data(), width, height, width, QImage::Format_Grayscale8);
-            QImage frameCopy = frame.copy();
+            QImage frameCopy;
+            if (currentCodec == 0) {
+                QImage frame(frameBuffer.data(), width, height, width, QImage::Format_Grayscale8);
+                frameCopy = frame.copy();
+            } else {
+                if (frameDataBytes <= 0 || frameDataBytes > static_cast<int>(frameBuffer.size())) {
+                    hasActiveFrame = false;
+                    continue;
+                }
+                std::vector<quint8> encoded(frameBuffer.begin(), frameBuffer.begin() + frameDataBytes);
+                if (!decodeRleToRaw(encoded, decodedBuffer, frameBytes)) {
+                    queueStatusMessage("UDP Stream: failed to decode compressed frame.");
+                    hasActiveFrame = false;
+                    continue;
+                }
+                QImage frame(decodedBuffer.data(), width, height, width, QImage::Format_Grayscale8);
+                frameCopy = frame.copy();
+            }
+
             {
                 std::lock_guard<std::mutex> lock(stateMutex);
                 lastFrame = frameCopy;
