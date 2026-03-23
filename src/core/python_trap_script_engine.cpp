@@ -855,6 +855,28 @@ PythonTrapScriptResult PythonTrapScriptEngine::runScript(const QString &script,
         goto cleanup;
     }
 
+    // ── Script-declared overrides ──────────────────────────────────────────
+    // If the script sets FRAME_COUNT or FPS at module level they take priority
+    // over the UI spinbox values.
+    {
+        PyObject *fcObj = PyDict_GetItemString(globals, "FRAME_COUNT");
+        if (fcObj && PyLong_Check(fcObj)) {
+            const long fc = PyLong_AsLong(fcObj);
+            if (fc > 0 && fc <= 10000) {
+                // Override the UI frame count for this run
+                safeRequestedFrames = static_cast<int>(fc);
+            }
+        }
+
+        PyObject *fpsObj = PyDict_GetItemString(globals, "FPS");
+        if (fpsObj && PyLong_Check(fpsObj)) {
+            const long fps = PyLong_AsLong(fpsObj);
+            if (fps > 0 && fps <= 1000) {
+                result.overrideFps = static_cast<int>(fps);
+            }
+        }
+    }
+
     funcPattern = PyDict_GetItemString(globals, "build_pattern");
     if (funcPattern && PyCallable_Check(funcPattern)) {
         args = Py_BuildValue("(ii)", cameraWidth, cameraHeight);

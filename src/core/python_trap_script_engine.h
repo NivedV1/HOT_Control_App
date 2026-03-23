@@ -9,6 +9,7 @@ struct PythonTrapScriptResult {
     bool success = false;
     QString errorMessage;
     QString warningMessage;
+    int overrideFps = 0;          // 0 = use UI value; >0 = script-declared FPS
     QVector<QVector<QPointF>> frames;
 };
 

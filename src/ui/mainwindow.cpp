@@ -2371,8 +2371,16 @@ bool MainWindow::buildPythonSequenceFromUi(bool showWarnings) {
     activeSequenceSource = SequenceSource::PythonScript;
     populatePythonTrapSelector();
 
+    // Apply script-declared FPS back to the UI spinbox
+    if (result.overrideFps > 0 && pythonFpsSpin) {
+        pythonFpsSpin->setValue(result.overrideFps);
+    }
+
     if (pythonStatusLabel) {
         QString status = QString("Generated %1 frame(s) from Python script.").arg(animationFramePoints.size());
+        if (result.overrideFps > 0) {
+            status += QString(" (FPS set to %1 by script.)").arg(result.overrideFps);
+        }
         if (!result.warningMessage.isEmpty()) {
             status += " " + result.warningMessage;
         }

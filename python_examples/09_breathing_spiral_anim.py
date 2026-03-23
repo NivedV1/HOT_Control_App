@@ -4,6 +4,11 @@ import math
 # ──────────────────────────────────────────
 # An Archimedean spiral whose radial scale pulses in and out
 # like a breathing motion, driven by a sine envelope.
+#
+# FRAME_COUNT and FPS declared here override the UI spinboxes.
+
+FRAME_COUNT = 90   # use a multiple of the breathing period for clean loops
+FPS         = 30
 
 def build_frames(frame_count, width, height):
     n_pts   = 30

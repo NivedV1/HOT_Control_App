@@ -19,6 +19,15 @@ Precedence:
 
 If a single frame is returned, the app treats it as static and repeats it.
 
+## Script-Declared Settings
+You can optionally define these variables at the top of your script to override the UI spinboxes:
+
+```python
+FRAME_COUNT = 60   # Overrides the "No. of frames" spinbox
+FPS         = 30   # Overrides the "Frame rate" spinbox
+```
+This is useful for making your animated `.py` files fully self-contained.
+
 ## Built-in Pattern Helpers
 The app injects helper namespace `hot.pattern`:
 - `circle`

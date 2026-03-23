@@ -4,7 +4,11 @@ import math
 # ─────────────────────────────────────────────
 # Two counter-wound strands of traps orbit continuously,
 # projecting a 3-D helical structure onto the XY focal plane.
-# Strand A and Strand B are offset by pi (half a turn) from each other.
+#
+# FRAME_COUNT and FPS declared here override the UI spinboxes.
+
+FRAME_COUNT = 60
+FPS         = 24   # slightly cinematic rate
 
 def build_frames(frame_count, width, height):
     n_per_strand = 8

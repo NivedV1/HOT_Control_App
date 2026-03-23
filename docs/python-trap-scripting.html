@@ -113,6 +113,14 @@
       <p>If a single frame is returned, the app treats it as static and repeats it.</p>
     </div>
 
+    <h2>Script-Declared Settings</h2>
+    <div class="card">
+      <p>You can optionally define these variables at the top of your script to override the UI spinboxes:</p>
+      <pre><code>FRAME_COUNT = 60   # Overrides the "No. of frames" spinbox
+FPS         = 30   # Overrides the "Frame rate" spinbox</code></pre>
+      <p>This is useful for making your animated <code>.py</code> files fully self-contained.</p>
+    </div>
+
     <h2>Built-in Pattern Helpers</h2>
     <div class="grid">
       <div class="chip"><code>hot.pattern.circle(...)</code></div>
