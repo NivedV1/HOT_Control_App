@@ -11,6 +11,8 @@
 #include <QStandardItemModel>
 #include <QStringList>
 #include <QVBoxLayout>
+#include <QScreen>
+#include <QGuiApplication>
 #include <QtGlobal>
 
 SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
@@ -28,9 +30,20 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     : QDialog(parent) {
 
     setWindowTitle("Hardware Settings");
-    setMinimumWidth(430);
+    setMinimumWidth(450);
+
+    // Resize to fit primary screen height with a small buffer
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        const int availableHeight = screen->availableGeometry().height();
+        resize(500, availableHeight - 60);
+    } else {
+        resize(500, 800);
+    }
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(12, 12, 12, 12);
+    mainLayout->setSpacing(8);
 
     // --- 1. SLM SETTINGS ---
     QGroupBox *slmGroup = new QGroupBox("SLM Parameters");
@@ -188,6 +201,7 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     camForm->addRow("Camera Height (px):", camHeightSpin);
     camForm->addRow("Camera Pixel Size:", camPixelSpin);
     camForm->addRow(new QLabel("<b>UDP Stream Settings</b>", this));
+    camForm->addRow("UDP Bind IP:", udpBindIpEdit);
     camForm->addRow("UDP Port:", udpPortSpin);
     camGroup->setLayout(camForm);
 
