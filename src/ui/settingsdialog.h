@@ -22,7 +22,7 @@ public:
                    int startingPhaseMaskMode,
                    int gsComputeBackendMode,
                    int openClPlatformIndex,
-                   int openClDeviceIndex,
+                    int openClDeviceIndex,
                    int cudaDeviceIndex,
                    QWidget *parent = nullptr);
 
@@ -82,4 +82,3 @@ private:
 };
 
 #endif // SETTINGSDIALOG_H
-

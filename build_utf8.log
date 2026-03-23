@@ -1,0 +1,47 @@
+﻿MSBuild version 17.14.40+3e7442088 for .NET Framework
+
+  Automatic MOC and UIC for target HOT_Control_App
+  HOT_Control_App.vcxproj -> C:\Users\NIVED\Desktop\HOT_Control_App\build_gt730_combo\Release\HOT_Control_App.exe
+  C:\Users\NIVED\Desktop\HOT_Control_App\build_gt730_combo\Release\HOT_Control_App.exe 64 bit, release executable
+  Adding in plugin type generic for module: Qt6Gui
+  Adding in plugin type iconengines for module: Qt6Gui
+  Adding Qt6Svg for qsvgicon.dll from plugin type: iconengines
+  Adding in plugin type imageformats for module: Qt6Gui
+  Adding in plugin type multimedia for module: Qt6Multimedia
+  Adding in plugin type networkinformation for module: Qt6Network
+  Adding in plugin type platforms for module: Qt6Gui
+  Adding in plugin type styles for module: Qt6Widgets
+  Adding in plugin type tls for module: Qt6Network
+  Direct dependencies: Qt6Core Qt6Gui Qt6Multimedia Qt6Network Qt6Widgets
+  All dependencies   : Qt6Core Qt6Gui Qt6Multimedia Qt6Network Qt6Widgets
+  To be deployed     : Qt6Core Qt6Gui Qt6Multimedia Qt6Network Qt6Svg Qt6Widgets
+EXEC : warning : Cannot find Visual Studio installation directory, VCINSTALLDIR is not set. [C:\Users\NIVED\Desktop\HOT_Control_App\build_gt730_combo\HOT_Control_App.vcxproj]
+  Qt6Core.dll is up to date.
+  Qt6Gui.dll is up to date.
+  Qt6Multimedia.dll is up to date.
+  Qt6Network.dll is up to date.
+  Qt6Svg.dll is up to date.
+  Qt6Widgets.dll is up to date.
+  opengl32sw.dll is up to date.
+  D3Dcompiler_47.dll is up to date.
+  dxcompiler.dll is up to date.
+  dxil.dll is up to date.
+  avcodec-61.dll is up to date.
+  avformat-61.dll is up to date.
+  avutil-59.dll is up to date.
+  swresample-5.dll is up to date.
+  swscale-8.dll is up to date.
+  qtuiotouchplugin.dll is up to date.
+  qsvgicon.dll is up to date.
+  qgif.dll is up to date.
+  qico.dll is up to date.
+  qjpeg.dll is up to date.
+  qsvg.dll is up to date.
+  ffmpegmediaplugin.dll is up to date.
+  windowsmediaplugin.dll is up to date.
+  qnetworklistmanager.dll is up to date.
+  qwindows.dll is up to date.
+  qmodernwindowsstyle.dll is up to date.
+  qcertonlybackend.dll is up to date.
+  qopensslbackend.dll is up to date.
+  qschannelbackend.dll is up to date.

@@ -265,6 +265,9 @@ private:
     int camHeight = 1080;
     double camPixelSize = 5.0;
     int cameraViewRotationDegrees = 0;
+    bool flipCameraX = false;
+    bool flipCameraY = false;
+    bool saveFollowsTransforms = false;
     QString udpBindIp = "0.0.0.0";
     int udpPort = 9000;
     double laserWavelength = 1064.0;

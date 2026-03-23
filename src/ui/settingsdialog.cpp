@@ -188,7 +188,6 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     camForm->addRow("Camera Height (px):", camHeightSpin);
     camForm->addRow("Camera Pixel Size:", camPixelSpin);
     camForm->addRow(new QLabel("<b>UDP Stream Settings</b>", this));
-    camForm->addRow("UDP Bind IP:", udpBindIpEdit);
     camForm->addRow("UDP Port:", udpPortSpin);
     camGroup->setLayout(camForm);
 
@@ -278,4 +277,3 @@ int SettingsDialog::getCudaDeviceIndex() const {
     const int value = cudaDeviceCombo->currentData().toInt(&ok);
     return ok ? value : -1;
 }
-

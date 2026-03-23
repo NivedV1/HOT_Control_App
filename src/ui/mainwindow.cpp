@@ -238,10 +238,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         cameraBackend = 0;
     }
 
-    camWidth = settings.value("Hardware/Cam_Width", 1920).toInt();
     camHeight = settings.value("Hardware/Cam_Height", 1080).toInt();
     camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
-    cameraViewRotationDegrees = normalizeCameraRotation(settings.value("Hardware/Camera_ViewRotation", 0).toInt());
+    flipCameraX = settings.value("Hardware/Camera_FlipX", false).toBool();
+    flipCameraY = settings.value("Hardware/Camera_FlipY", false).toBool();
+    saveFollowsTransforms = settings.value("Camera/save_follows_transforms", false).toBool();
     udpBindIp = settings.value("Hardware/UDP_BindIP", "0.0.0.0").toString();
     udpPort = settings.value("Hardware/UDP_Port", 9000).toInt();
     laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
@@ -969,6 +970,7 @@ void MainWindow::openSettingsDialog() {
         autoSendSlmEnabled = dialog.getAutoSendSlmEnabled();
         gsStartingPhaseMaskMode = dialog.getStartingPhaseMaskMode();
         gsComputeBackendMode = dialog.getGsComputeBackendMode();
+
         openClPlatformIndex = dialog.getOpenClPlatformIndex();
         openClDeviceIndex = dialog.getOpenClDeviceIndex();
         cudaDeviceIndex = dialog.getCudaDeviceIndex();
@@ -1490,9 +1492,14 @@ void MainWindow::updateCameraFeed(const QImage &img) {
     lastCameraFrame = img.copy();
     QImage displayImg = img.convertToFormat(QImage::Format_ARGB32);
 
-    if (cameraViewRotationDegrees != 0) {
+    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
         QTransform transform;
-        transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        if (flipCameraX || flipCameraY) {
+            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
+        }
+        if (cameraViewRotationDegrees != 0) {
+            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        }
         displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
     }
 

@@ -78,6 +78,10 @@ private:
     QTimer *cvTimer = nullptr;
     bool isRecordingCV = false;
     qint64 cvRecordStartTime = 0;
+    bool cvSaveFollows = false;
+    bool cvFlipX = false;
+    bool cvFlipY = false;
+    int cvRot = 0;
 
     // UDP stream variables
     CameraStream *udpStream = nullptr;
