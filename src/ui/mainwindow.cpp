@@ -26,6 +26,7 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QPlainTextEdit>
+#include "components/pythoncodeeditor.h"
 #include <QFile>
 #include <QTextStream>
 #include <QMenuBar>
@@ -669,9 +670,10 @@ void MainWindow::createControls(QGridLayout *layout) {
     pythonTrapSelectorCombo = new QComboBox();
     pythonTrapSelectorCombo->addItem("None", -1);
 
-    pythonCodeEditor = new QPlainTextEdit();
+    pythonCodeEditor = new PythonCodeEditor();
     pythonCodeEditor->setPlaceholderText("def build_frames(frame_count, width, height):\\n    return [[[0, 0]]]");
     pythonCodeEditor->setMinimumHeight(220);
+    pythonCodeEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     pythonCodeEditor->setTabStopDistance(4 * fontMetrics().horizontalAdvance(' '));
     pythonCodeEditor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     pythonCodeEditor->setPlainText(defaultPythonScriptTemplate());
@@ -680,12 +682,15 @@ void MainWindow::createControls(QGridLayout *layout) {
     QHBoxLayout *pythonButtons = new QHBoxLayout();
     pythonGenerateBtn = new QPushButton("Run Code");
     pythonPlaySendBtn = new QPushButton("Send");
+    pythonSaveScriptBtn = new QPushButton("Save .py");
+    pythonLoadScriptBtn = new QPushButton("Load .py");
     pythonButtons->addWidget(pythonGenerateBtn);
     pythonButtons->addWidget(pythonPlaySendBtn);
+    pythonButtons->addWidget(pythonSaveScriptBtn);
+    pythonButtons->addWidget(pythonLoadScriptBtn);
 
-    pythonLayout->addWidget(pythonCodeEditor);
+    pythonLayout->addWidget(pythonCodeEditor, 1);
     pythonLayout->addLayout(pythonButtons);
-    pythonLayout->addStretch();
 
     targetModeTabs->addTab(pythonTab, "Python");
 
@@ -810,6 +815,8 @@ void MainWindow::setupConnections() {
     connect(pythonPlaySendBtn, &QPushButton::clicked, this, &MainWindow::onPlayPythonSequenceClicked);
     connect(pythonStopBtn, &QPushButton::clicked, this, &MainWindow::onStopPythonSequenceClicked);
     connect(pythonResetBtn, &QPushButton::clicked, this, &MainWindow::onResetPythonSequenceClicked);
+    connect(pythonSaveScriptBtn, &QPushButton::clicked, this, &MainWindow::onSavePythonScriptClicked);
+    connect(pythonLoadScriptBtn, &QPushButton::clicked, this, &MainWindow::onLoadPythonScriptClicked);
     connect(pythonTrapSelectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onPythonTrapSelectionChanged);
 
@@ -1975,6 +1982,56 @@ void MainWindow::onPythonTrapSelectionChanged(int index) {
     }
 }
 
+void MainWindow::onSavePythonScriptClicked() {
+    if (!pythonCodeEditor) {
+        return;
+    }
+    const QString filePath = QFileDialog::getSaveFileName(
+        this,
+        tr("Save Python Script"),
+        QString(),
+        tr("Python Files (*.py);;All Files (*)")
+    );
+    if (filePath.isEmpty()) {
+        return;
+    }
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("Could not open file for writing:\n%1").arg(filePath));
+        return;
+    }
+    QTextStream out(&file);
+    out << pythonCodeEditor->toPlainText();
+    file.close();
+    statusBar()->showMessage(tr("Script saved to: %1").arg(filePath), 5000);
+}
+
+void MainWindow::onLoadPythonScriptClicked() {
+    if (!pythonCodeEditor) {
+        return;
+    }
+    const QString filePath = QFileDialog::getOpenFileName(
+        this,
+        tr("Load Python Script"),
+        QString(),
+        tr("Python Files (*.py);;All Files (*)")
+    );
+    if (filePath.isEmpty()) {
+        return;
+    }
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Load Failed"),
+                             tr("Could not open file for reading:\n%1").arg(filePath));
+        return;
+    }
+    QTextStream in(&file);
+    pythonCodeEditor->setPlainText(in.readAll());
+    file.close();
+    statusBar()->showMessage(tr("Script loaded from: %1").arg(filePath), 5000);
+}
+
 void MainWindow::onAnimationTimerTimeout() {
     if (!animationSequenceReady || animationFramePoints.isEmpty()) {
         if (animationTimer) {
@@ -2424,26 +2481,21 @@ void MainWindow::clearAnimationSequenceState(bool clearPreviews) {
 
 QString MainWindow::defaultPythonScriptTemplate() const {
     return QString::fromUtf8(
-        "# Static-first script (recommended): return a single frame.\n"
-        "# The app repeats it automatically unless you define motion with build_frames.\n"
+        "import math\n"
+        "\n"
+        "# Regular polygon – Example 1\n"
+        "# Returns a list of [x, y] points arranged as a regular N-gon.\n"
+        "# Origin is the camera centre; units are pixels.\n"
+        "# Load more examples via File → Load .py or from the python_examples/ folder.\n"
         "\n"
         "def build_pattern(width, height):\n"
-        "    return hot.pattern.circle(point_count=12)\n"
-        "\n"
-        "# Optional motion example:\n"
-        "# import math\n"
-        "# def build_frames(frame_count, width, height):\n"
-        "#     frames = []\n"
-        "#     radius = min(width, height) * 0.25\n"
-        "#     for f in range(frame_count):\n"
-        "#         t = 0.0 if frame_count <= 1 else f / float(frame_count - 1)\n"
-        "#         rot = 2.0 * math.pi * t\n"
-        "#         frame = []\n"
-        "#         for i in range(12):\n"
-        "#             a = rot + 2.0 * math.pi * i / 12\n"
-        "#             frame.append([radius * math.cos(a), radius * math.sin(a)])\n"
-        "#         frames.append(frame)\n"
-        "#     return frames\n");
+        "    N      = 8                           # number of vertices\n"
+        "    radius = min(width, height) * 0.25\n"
+        "    pts = []\n"
+        "    for i in range(N):\n"
+        "        a = 2 * math.pi * i / N - math.pi / 2\n"
+        "        pts.append([radius * math.cos(a), radius * math.sin(a)])\n"
+        "    return pts\n");
 }
 
 void MainWindow::toggleTheme() {

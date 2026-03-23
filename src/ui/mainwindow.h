@@ -34,6 +34,7 @@ class QScrollArea;
 class QPlainTextEdit;
 class TargetGridWidget;
 class PatternPresetsWidget;
+class PythonCodeEditor;
 class PythonTrapScriptEngine;
 
 // --- DLL Function Pointers (Bypasses the need for LabVIEW's extcode.h) ---
@@ -99,6 +100,8 @@ private slots:
     void onStopPythonSequenceClicked();
     void onResetPythonSequenceClicked();
     void onPythonTrapSelectionChanged(int index);
+    void onSavePythonScriptClicked();
+    void onLoadPythonScriptClicked();
 
 private:
     enum SlmOutputMode {
@@ -205,7 +208,7 @@ private:
     QPushButton *animationStopBtn = nullptr;
     QPushButton *animationResetBtn = nullptr;
     QWidget *pythonTab = nullptr;
-    QPlainTextEdit *pythonCodeEditor = nullptr;
+    PythonCodeEditor *pythonCodeEditor = nullptr;
     QSpinBox *pythonFpsSpin = nullptr;
     QSpinBox *pythonFrameCountSpin = nullptr;
     QSpinBox *pythonMaxPointsSpin = nullptr;
@@ -218,6 +221,8 @@ private:
     QPushButton *pythonPlaySendBtn = nullptr;
     QPushButton *pythonStopBtn = nullptr;
     QPushButton *pythonResetBtn = nullptr;
+    QPushButton *pythonSaveScriptBtn = nullptr;
+    QPushButton *pythonLoadScriptBtn = nullptr;
 
     // Algorithm controls
     QComboBox *algorithmCombo = nullptr;

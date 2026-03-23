@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.16)
 
 project(HOT_Control_App VERSION 1.0 LANGUAGES CXX)
 option(HOT_TARGET_GT730 "Build for GT 730 / Kepler (CUDA sm_35)" ON)
@@ -145,6 +145,7 @@ set(SOURCES
     src/hardware/camera_stream.cpp
     src/ui/components/targetgridwidget.cpp
     src/ui/components/pythonsyntaxhighlighter.cpp
+    src/ui/components/pythoncodeeditor.cpp
     src/core/patterngenerator.cpp
     src/core/python_trap_script_engine.cpp
     src/ui/components/patternpresetswidget.cpp
@@ -168,6 +169,7 @@ set(HEADERS
     src/ui/components/patternview.h
     src/ui/components/targetgridwidget.h
     src/ui/components/pythonsyntaxhighlighter.h
+    src/ui/components/pythoncodeeditor.h
     src/ui/components/patternpresetswidget.h
     src/core/patterngenerator.h
     src/core/python_trap_script_engine.h
