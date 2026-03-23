@@ -31,8 +31,10 @@ class QTimer;
 class QWidget;
 class QStackedWidget;
 class QScrollArea;
+class QPlainTextEdit;
 class TargetGridWidget;
 class PatternPresetsWidget;
+class PythonTrapScriptEngine;
 
 // --- DLL Function Pointers (Bypasses the need for LabVIEW's extcode.h) ---
 typedef void (__stdcall *Window_Settings_Func)(int32_t MonitorNumber, int32_t WindowNumber015, int32_t XPixelShift, int32_t YPixelShift);
@@ -92,6 +94,11 @@ private slots:
     void onStopAnimationClicked();
     void onResetAnimationClicked();
     void onAnimationTimerTimeout();
+    void onGeneratePythonSequenceClicked();
+    void onPlayPythonSequenceClicked();
+    void onStopPythonSequenceClicked();
+    void onResetPythonSequenceClicked();
+    void onPythonTrapSelectionChanged(int index);
 
 private:
     enum SlmOutputMode {
@@ -103,6 +110,11 @@ private:
         ManualButton = 0,
         AutoRunTimer = 1,
         SendToSlmPreRun = 2
+    };
+
+    enum class SequenceSource {
+        AnimationPreset = 0,
+        PythonScript = 1
     };
 
     // Grid enlargement/minimize
@@ -147,11 +159,17 @@ private:
     bool runGsForTargetPoints(const QVector<QPointF> &points, int iterationsOverride, QImage &outMask, QString *errorOut = nullptr);
     void updateAnimationControlsEnabledState();
     void updateAnimationPreviewLabels(const QVector<QPointF> &points);
-    QImage buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle) const;
+    QImage buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle, int highlightIndexOneBased = -1) const;
     bool buildAnimationSequenceFromUi(bool showWarnings);
+    bool buildPythonSequenceFromUi(bool showWarnings);
     bool precomputeAnimationMasks(bool showWarnings);
     void clearAnimationSequenceState(bool clearPreviews);
+    void populatePythonTrapSelector();
+    void applyTrapHighlightForCurrentFrame(const QVector<QPointF> &points);
+    bool currentSequenceRealtime() const;
     int animationTimerIntervalMs() const;
+    int currentSequenceFps() const;
+    QString defaultPythonScriptTemplate() const;
 
     // UI Pointers
     TargetGridWidget *targetGridWidget;
@@ -186,6 +204,20 @@ private:
     QPushButton *animationPlaySendBtn = nullptr;
     QPushButton *animationStopBtn = nullptr;
     QPushButton *animationResetBtn = nullptr;
+    QWidget *pythonTab = nullptr;
+    QPlainTextEdit *pythonCodeEditor = nullptr;
+    QSpinBox *pythonFpsSpin = nullptr;
+    QSpinBox *pythonFrameCountSpin = nullptr;
+    QSpinBox *pythonMaxPointsSpin = nullptr;
+    QCheckBox *pythonRealtimeCheck = nullptr;
+    QComboBox *pythonTrapSelectorCombo = nullptr;
+    QLabel *pythonStatusLabel = nullptr;
+    QLabel *pythonIntensityPreviewLabel = nullptr;
+    QLabel *pythonCameraPreviewLabel = nullptr;
+    QPushButton *pythonGenerateBtn = nullptr;
+    QPushButton *pythonPlaySendBtn = nullptr;
+    QPushButton *pythonStopBtn = nullptr;
+    QPushButton *pythonResetBtn = nullptr;
 
     // Algorithm controls
     QComboBox *algorithmCombo = nullptr;
@@ -277,6 +309,9 @@ private:
     bool animationRealtimeRunning = false;
     bool animationPlaybackRunning = false;
     bool animationComputeLimitedWarned = false;
+    SequenceSource activeSequenceSource = SequenceSource::AnimationPreset;
+    int selectedSequenceTrapIndexOneBased = -1;
+    PythonTrapScriptEngine *pythonScriptEngine = nullptr;
 
     // Grid point data
     QMap<int, QPointF> gridPointData;

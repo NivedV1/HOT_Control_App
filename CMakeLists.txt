@@ -18,6 +18,60 @@ set(CMAKE_AUTOUIC ON)
 
 # Find Qt6
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+if (MSVC)
+    if (DEFINED Python3_LIBRARY_RELEASE AND EXISTS "${Python3_LIBRARY_RELEASE}")
+        set(HOT_PYTHON_LINK_LIB "${Python3_LIBRARY_RELEASE}")
+    elseif (DEFINED _Python3_LIBRARY_RELEASE AND EXISTS "${_Python3_LIBRARY_RELEASE}")
+        set(HOT_PYTHON_LINK_LIB "${_Python3_LIBRARY_RELEASE}")
+    else()
+        set(HOT_PYTHON_LINK_LIB ${Python3_LIBRARIES})
+    endif()
+else()
+    set(HOT_PYTHON_LINK_LIB ${Python3_LIBRARIES})
+endif()
+
+if (WIN32)
+    if (DEFINED Python3_RUNTIME_LIBRARY_RELEASE AND EXISTS "${Python3_RUNTIME_LIBRARY_RELEASE}")
+        set(HOT_PYTHON_RUNTIME_DLL "${Python3_RUNTIME_LIBRARY_RELEASE}")
+    elseif (DEFINED _Python3_RUNTIME_LIBRARY_RELEASE AND EXISTS "${_Python3_RUNTIME_LIBRARY_RELEASE}")
+        set(HOT_PYTHON_RUNTIME_DLL "${_Python3_RUNTIME_LIBRARY_RELEASE}")
+    else()
+        get_filename_component(HOT_PYTHON_BIN_DIR "${Python3_EXECUTABLE}" DIRECTORY)
+        if (EXISTS "${HOT_PYTHON_BIN_DIR}/python312.dll")
+            set(HOT_PYTHON_RUNTIME_DLL "${HOT_PYTHON_BIN_DIR}/python312.dll")
+        endif()
+    endif()
+
+    get_filename_component(HOT_PYTHON_HOME_DIR "${Python3_EXECUTABLE}" DIRECTORY)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}" HOT_PYTHON_HOME_DIR_CMAKE)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}/Lib" HOT_PYTHON_LIB_DIR_CMAKE)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}/Lib/site-packages" HOT_PYTHON_SITE_PACKAGES_DIR_CMAKE)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}/Lib/site-packages/numpy" HOT_PYTHON_NUMPY_DIR_CMAKE)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}/Lib/site-packages/numpy.libs" HOT_PYTHON_NUMPY_LIBS_DIR_CMAKE)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}/DLLs" HOT_PYTHON_DLLS_DIR_CMAKE)
+    file(TO_CMAKE_PATH "${HOT_PYTHON_HOME_DIR}/python312.zip" HOT_PYTHON_ZIP_PATH_CMAKE)
+
+    # Fallback: detect NumPy from interpreter (covers user-local site-packages installs).
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" -c "import importlib.util, pathlib; s=importlib.util.find_spec('numpy'); print(pathlib.Path(s.origin).resolve().parent if s and s.origin else '')"
+        OUTPUT_VARIABLE HOT_PYTHON_NUMPY_DIR_DETECTED
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if (HOT_PYTHON_NUMPY_DIR_DETECTED)
+        file(TO_CMAKE_PATH "${HOT_PYTHON_NUMPY_DIR_DETECTED}" HOT_PYTHON_NUMPY_DIR_DETECTED_CMAKE)
+        if (NOT EXISTS "${HOT_PYTHON_NUMPY_DIR_CMAKE}" AND EXISTS "${HOT_PYTHON_NUMPY_DIR_DETECTED_CMAKE}")
+            set(HOT_PYTHON_NUMPY_DIR_CMAKE "${HOT_PYTHON_NUMPY_DIR_DETECTED_CMAKE}")
+        endif()
+
+        get_filename_component(HOT_PYTHON_NUMPY_PARENT_DIR "${HOT_PYTHON_NUMPY_DIR_DETECTED_CMAKE}" DIRECTORY)
+        file(TO_CMAKE_PATH "${HOT_PYTHON_NUMPY_PARENT_DIR}/numpy.libs" HOT_PYTHON_NUMPY_LIBS_DETECTED_CMAKE)
+        if (NOT EXISTS "${HOT_PYTHON_NUMPY_LIBS_DIR_CMAKE}" AND EXISTS "${HOT_PYTHON_NUMPY_LIBS_DETECTED_CMAKE}")
+            set(HOT_PYTHON_NUMPY_LIBS_DIR_CMAKE "${HOT_PYTHON_NUMPY_LIBS_DETECTED_CMAKE}")
+        endif()
+    endif()
+endif()
 
 # Find OpenCV
 set(OpenCV_DIR "C:/opencv/build")
@@ -90,7 +144,9 @@ set(SOURCES
     src/hardware/slm_controller.cpp
     src/hardware/camera_stream.cpp
     src/ui/components/targetgridwidget.cpp
+    src/ui/components/pythonsyntaxhighlighter.cpp
     src/core/patterngenerator.cpp
+    src/core/python_trap_script_engine.cpp
     src/ui/components/patternpresetswidget.cpp
 )
 
@@ -111,8 +167,10 @@ set(HEADERS
     src/ui/components/traptable.h
     src/ui/components/patternview.h
     src/ui/components/targetgridwidget.h
+    src/ui/components/pythonsyntaxhighlighter.h
     src/ui/components/patternpresetswidget.h
     src/core/patterngenerator.h
+    src/core/python_trap_script_engine.h
     src/core/trap_manager.h
     src/core/algorithms/phase_algorithm.h
     src/core/algorithms/gs_algorithm.h
@@ -172,6 +230,16 @@ else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_CUDA_GS=0)
 endif()
 
+if (WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        HOT_EMBED_PYTHON_HOME="${HOT_PYTHON_HOME_DIR_CMAKE}"
+        HOT_EMBED_PYTHON_LIB="${HOT_PYTHON_LIB_DIR_CMAKE}"
+        HOT_EMBED_PYTHON_SITE_PACKAGES="${HOT_PYTHON_SITE_PACKAGES_DIR_CMAKE}"
+        HOT_EMBED_PYTHON_DLLS="${HOT_PYTHON_DLLS_DIR_CMAKE}"
+        HOT_EMBED_PYTHON_ZIP="${HOT_PYTHON_ZIP_PATH_CMAKE}"
+    )
+endif()
+
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     src/ui
@@ -180,6 +248,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/core/algorithms
     src/hardware
     src/camera
+    ${Python3_INCLUDE_DIRS}
 )
 
 # Link the Qt libraries and OpenCV to your executable
@@ -189,6 +258,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Multimedia
     Qt6::MultimediaWidgets
+    ${HOT_PYTHON_LINK_LIB}
     ${OpenCV_LIBS}
 )
 
@@ -225,5 +295,60 @@ if (WIN32)
         "C:/opencv/build/x64/vc16/bin/opencv_world4120.dll"
         "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
     )
+
+    # 3. Copy Python runtime DLL required by embedded CPython.
+    if (DEFINED HOT_PYTHON_RUNTIME_DLL AND EXISTS "${HOT_PYTHON_RUNTIME_DLL}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${HOT_PYTHON_RUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        )
+        message(STATUS "Python runtime DLL deploy enabled: ${HOT_PYTHON_RUNTIME_DLL}")
+    else()
+        message(WARNING "Python runtime DLL not found during configure. Embedded Python may fail at runtime unless python312.dll is on PATH.")
+    endif()
+
+    # 4. Copy CPython stdlib/runtime folders for app-local embedded use (no system Python required).
+    if (DEFINED HOT_PYTHON_ZIP_PATH_CMAKE AND EXISTS "${HOT_PYTHON_ZIP_PATH_CMAKE}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${HOT_PYTHON_ZIP_PATH_CMAKE}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        )
+    endif()
+    if (DEFINED HOT_PYTHON_LIB_DIR_CMAKE AND EXISTS "${HOT_PYTHON_LIB_DIR_CMAKE}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${HOT_PYTHON_LIB_DIR_CMAKE}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Lib"
+        )
+    endif()
+    if (DEFINED HOT_PYTHON_DLLS_DIR_CMAKE AND EXISTS "${HOT_PYTHON_DLLS_DIR_CMAKE}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${HOT_PYTHON_DLLS_DIR_CMAKE}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/DLLs"
+        )
+    endif()
+
+    # 5. Copy NumPy package files if present in source Python.
+    if (DEFINED HOT_PYTHON_NUMPY_DIR_CMAKE AND EXISTS "${HOT_PYTHON_NUMPY_DIR_CMAKE}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Lib/site-packages"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${HOT_PYTHON_NUMPY_DIR_CMAKE}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Lib/site-packages/numpy"
+        )
+    else()
+        message(WARNING "NumPy package not found in source Python environment. 'import numpy' may fail on target machines.")
+    endif()
+    if (DEFINED HOT_PYTHON_NUMPY_LIBS_DIR_CMAKE AND EXISTS "${HOT_PYTHON_NUMPY_LIBS_DIR_CMAKE}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Lib/site-packages"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${HOT_PYTHON_NUMPY_LIBS_DIR_CMAKE}"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/Lib/site-packages/numpy.libs"
+        )
+    endif()
 
 endif()

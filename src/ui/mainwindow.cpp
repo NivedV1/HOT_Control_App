@@ -6,7 +6,9 @@
 #include "components/targetgridwidget.h"
 #include "components/patternpresetswidget.h"
 #include "components/arrowspinbox.h"
+#include "components/pythonsyntaxhighlighter.h"
 #include "../core/patterngenerator.h"
+#include "../core/python_trap_script_engine.h"
 #include "../core/algorithms/gs_algorithm.h"
 #include "../camera/cameramanager.h"
 
@@ -23,6 +25,7 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QCheckBox>
+#include <QPlainTextEdit>
 #include <QFile>
 #include <QTextStream>
 #include <QMenuBar>
@@ -46,15 +49,18 @@
 #include <QWindow>
 #include <QTimer>
 #include <QStyle>
+#include <QFontDatabase>
 
 namespace {
 constexpr int kImageTabIndex = 2;
+constexpr int kPythonTabIndex = 5;
 constexpr int kDefaultMonitorNumber = 2;
 constexpr int kDefaultActiveWidth = 1272;
 constexpr int kDefaultActiveHeight = 1024;
 constexpr int kDefaultActiveOffsetX = 0;
 constexpr int kDefaultActiveOffsetY = 0;
 constexpr int kGsAutoRunDebounceMs = 180;
+constexpr double kFramePointEpsilon = 1e-6;
 
 QString hardwareConfigPath() {
     return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
@@ -122,9 +128,37 @@ QString targetModeLabelFromIndex(int index) {
         return "Camera";
     case 4:
         return "Animation";
+    case 5:
+        return "Python";
     default:
         return "Unknown";
     }
+}
+
+bool areFramesEquivalent(const QVector<QPointF> &a, const QVector<QPointF> &b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (int i = 0; i < a.size(); ++i) {
+        if (qAbs(a.at(i).x() - b.at(i).x()) > kFramePointEpsilon ||
+            qAbs(a.at(i).y() - b.at(i).y()) > kFramePointEpsilon) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isStaticSequence(const QVector<QVector<QPointF>> &frames) {
+    if (frames.size() <= 1) {
+        return true;
+    }
+    const QVector<QPointF> &first = frames.first();
+    for (int i = 1; i < frames.size(); ++i) {
+        if (!areFramesEquivalent(first, frames.at(i))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void appendGsRuntimeLogEntry(const QString &triggerLabel,
@@ -231,6 +265,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
     applyTheme(isDarkMode);
 
+    pythonScriptEngine = new PythonTrapScriptEngine();
+    if (!pythonScriptEngine->isReady()) {
+        const QString runtimeError = pythonScriptEngine->initError().isEmpty()
+            ? QString("Embedded Python runtime initialization failed.")
+            : pythonScriptEngine->initError();
+        statusBar()->showMessage(runtimeError, 7000);
+        if (pythonStatusLabel) {
+            pythonStatusLabel->setText(runtimeError);
+        }
+    }
+
     camManager = new CameraManager(cameraBackend, udpBindIp, static_cast<quint16>(udpPort), this);
     setupConnections();
 
@@ -262,6 +307,9 @@ MainWindow::~MainWindow() {
         auto winTerm = (Window_Term_Func)slmLibrary.resolve("Window_Term");
         if (winTerm) winTerm(slmWindowID);
     }
+
+    delete pythonScriptEngine;
+    pythonScriptEngine = nullptr;
 }
 
 void MainWindow::setupUI() {
@@ -575,14 +623,71 @@ void MainWindow::createControls(QGridLayout *layout) {
     animationButtons->addWidget(animationStopBtn);
     animationButtons->addWidget(animationResetBtn);
 
+    QGroupBox *animationPreviewGroup = new QGroupBox("Preview");
+    QHBoxLayout *animationPreviewLayout = new QHBoxLayout(animationPreviewGroup);
+    animationIntensityPreviewLabel = new QLabel("No frame");
+    animationIntensityPreviewLabel->setAlignment(Qt::AlignCenter);
+    animationIntensityPreviewLabel->setMinimumSize(180, 120);
+    animationIntensityPreviewLabel->setStyleSheet("background-color: black; border: 1px solid #555;");
+    animationCameraPreviewLabel = new QLabel("No frame");
+    animationCameraPreviewLabel->setAlignment(Qt::AlignCenter);
+    animationCameraPreviewLabel->setMinimumSize(180, 120);
+    animationCameraPreviewLabel->setStyleSheet("background-color: black; border: 1px solid #555;");
+    animationPreviewLayout->addWidget(animationIntensityPreviewLabel);
+    animationPreviewLayout->addWidget(animationCameraPreviewLabel);
+
     animationLayout->addWidget(animationConfigGroup);
     animationLayout->addLayout(animationButtons);
+    animationLayout->addWidget(animationPreviewGroup);
     animationLayout->addStretch(1);
 
     animationScrollArea->setWidget(animationContentWidget);
     animationTabLayout->addWidget(animationScrollArea);
 
     targetModeTabs->addTab(animationTab, "Animation");
+
+    pythonTab = new QWidget();
+    QVBoxLayout *pythonLayout = new QVBoxLayout(pythonTab);
+    pythonLayout->setContentsMargins(6, 6, 6, 6);
+    pythonLayout->setSpacing(8);
+
+    pythonFpsSpin = new QSpinBox();
+    pythonFpsSpin->setRange(1, 240);
+    pythonFpsSpin->setValue(30);
+
+    pythonFrameCountSpin = new QSpinBox();
+    pythonFrameCountSpin->setRange(1, 1000);
+    pythonFrameCountSpin->setValue(120);
+
+    pythonMaxPointsSpin = new QSpinBox();
+    pythonMaxPointsSpin->setRange(1, 2000);
+    pythonMaxPointsSpin->setValue(48);
+
+    pythonRealtimeCheck = new QCheckBox("Realtime");
+    pythonRealtimeCheck->setChecked(true);
+
+    pythonTrapSelectorCombo = new QComboBox();
+    pythonTrapSelectorCombo->addItem("None", -1);
+
+    pythonCodeEditor = new QPlainTextEdit();
+    pythonCodeEditor->setPlaceholderText("def build_frames(frame_count, width, height):\\n    return [[[0, 0]]]");
+    pythonCodeEditor->setMinimumHeight(220);
+    pythonCodeEditor->setTabStopDistance(4 * fontMetrics().horizontalAdvance(' '));
+    pythonCodeEditor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    pythonCodeEditor->setPlainText(defaultPythonScriptTemplate());
+    new PythonSyntaxHighlighter(pythonCodeEditor->document());
+
+    QHBoxLayout *pythonButtons = new QHBoxLayout();
+    pythonGenerateBtn = new QPushButton("Run Code");
+    pythonPlaySendBtn = new QPushButton("Send");
+    pythonButtons->addWidget(pythonGenerateBtn);
+    pythonButtons->addWidget(pythonPlaySendBtn);
+
+    pythonLayout->addWidget(pythonCodeEditor);
+    pythonLayout->addLayout(pythonButtons);
+    pythonLayout->addStretch();
+
+    targetModeTabs->addTab(pythonTab, "Python");
 
     leftCol->addWidget(targetModeTabs);
 
@@ -701,6 +806,12 @@ void MainWindow::setupConnections() {
     connect(animationPlaySendBtn, &QPushButton::clicked, this, &MainWindow::onPlayAnimationClicked);
     connect(animationStopBtn, &QPushButton::clicked, this, &MainWindow::onStopAnimationClicked);
     connect(animationResetBtn, &QPushButton::clicked, this, &MainWindow::onResetAnimationClicked);
+    connect(pythonGenerateBtn, &QPushButton::clicked, this, &MainWindow::onGeneratePythonSequenceClicked);
+    connect(pythonPlaySendBtn, &QPushButton::clicked, this, &MainWindow::onPlayPythonSequenceClicked);
+    connect(pythonStopBtn, &QPushButton::clicked, this, &MainWindow::onStopPythonSequenceClicked);
+    connect(pythonResetBtn, &QPushButton::clicked, this, &MainWindow::onResetPythonSequenceClicked);
+    connect(pythonTrapSelectorCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onPythonTrapSelectionChanged);
 
     connect(algorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onAlgorithmSelectionChanged);
@@ -787,6 +898,20 @@ void MainWindow::setupConnections() {
         QWidget::setTabOrder(animationGenerateBtn, animationPlaySendBtn);
         QWidget::setTabOrder(animationPlaySendBtn, animationStopBtn);
         QWidget::setTabOrder(animationStopBtn, animationResetBtn);
+    }
+
+    if (pythonFpsSpin && pythonFrameCountSpin && pythonMaxPointsSpin && pythonRealtimeCheck &&
+        pythonTrapSelectorCombo && pythonCodeEditor && pythonGenerateBtn && pythonPlaySendBtn &&
+        pythonStopBtn && pythonResetBtn) {
+        QWidget::setTabOrder(pythonFpsSpin, pythonFrameCountSpin);
+        QWidget::setTabOrder(pythonFrameCountSpin, pythonMaxPointsSpin);
+        QWidget::setTabOrder(pythonMaxPointsSpin, pythonRealtimeCheck);
+        QWidget::setTabOrder(pythonRealtimeCheck, pythonTrapSelectorCombo);
+        QWidget::setTabOrder(pythonTrapSelectorCombo, pythonCodeEditor);
+        QWidget::setTabOrder(pythonCodeEditor, pythonGenerateBtn);
+        QWidget::setTabOrder(pythonGenerateBtn, pythonPlaySendBtn);
+        QWidget::setTabOrder(pythonPlaySendBtn, pythonStopBtn);
+        QWidget::setTabOrder(pythonStopBtn, pythonResetBtn);
     }
 }
 
@@ -1576,6 +1701,7 @@ void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
     }
 
     suppressGridStatusMessages = false;
+    applyTrapHighlightForCurrentFrame(points);
     scheduleGsAutoRun();
     if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
         updateCameraFeed(lastCameraFrame);
@@ -1603,6 +1729,14 @@ void MainWindow::onAnimationPresetChanged(int index) {
 }
 
 void MainWindow::onGenerateAnimationSequenceClicked() {
+    activeSequenceSource = SequenceSource::AnimationPreset;
+    selectedSequenceTrapIndexOneBased = -1;
+    if (pythonTrapSelectorCombo) {
+        const int noneIndex = pythonTrapSelectorCombo->findData(-1);
+        if (noneIndex >= 0) {
+            pythonTrapSelectorCombo->setCurrentIndex(noneIndex);
+        }
+    }
     if (!buildAnimationSequenceFromUi(true)) {
         return;
     }
@@ -1626,7 +1760,16 @@ void MainWindow::onGenerateAnimationSequenceClicked() {
     }
 
     animationSequenceReady = true;
-    animationParticlesSpin->setEnabled(false);
+    if (activeSequenceSource == SequenceSource::AnimationPreset) {
+        if (animationParticlesSpin) {
+            animationParticlesSpin->setEnabled(false);
+        }
+    } else if (pythonMaxPointsSpin) {
+        pythonMaxPointsSpin->setEnabled(false);
+    }
+    if (pythonStatusLabel) {
+        pythonStatusLabel->setText("Animation preset sequence is active.");
+    }
     updateAnimationControlsEnabledState();
 
     statusBar()->showMessage(
@@ -1637,16 +1780,59 @@ void MainWindow::onGenerateAnimationSequenceClicked() {
         5000);
 }
 
+void MainWindow::onGeneratePythonSequenceClicked() {
+    activeSequenceSource = SequenceSource::PythonScript;
+    if (!buildPythonSequenceFromUi(true)) {
+        return;
+    }
+
+    animationIterationsSnapshot = iterationsSpin ? iterationsSpin->value() : 20;
+    animationCurrentFrameIndex = 0;
+    animationComputeLimitedWarned = false;
+
+    if (!animationFramePoints.isEmpty()) {
+        updateAnimationPreviewLabels(animationFramePoints.first());
+        replaceGridWithPoints(animationFramePoints.first());
+    }
+
+    animationPrecomputeReady = false;
+    animationPrecomputedMasks.clear();
+
+    if (!currentSequenceRealtime()) {
+        if (!precomputeAnimationMasks(true)) {
+            return;
+        }
+    }
+
+    animationSequenceReady = true;
+    updateAnimationControlsEnabledState();
+
+    statusBar()->showMessage(
+        QString("Python sequence generated (%1 frames).").arg(animationFramePoints.size()),
+        5000);
+}
+
 void MainWindow::onPlayAnimationClicked() {
     if (!animationSequenceReady || animationFramePoints.isEmpty()) {
-        if (!buildAnimationSequenceFromUi(true)) {
+        const bool shouldUsePython = (activeSequenceSource == SequenceSource::PythonScript) ||
+                                     (targetModeTabs && targetModeTabs->currentIndex() == kPythonTabIndex);
+        if (shouldUsePython) {
+            activeSequenceSource = SequenceSource::PythonScript;
+        } else {
+            activeSequenceSource = SequenceSource::AnimationPreset;
+        }
+
+        const bool built = shouldUsePython
+            ? buildPythonSequenceFromUi(true)
+            : buildAnimationSequenceFromUi(true);
+        if (!built) {
             return;
         }
         animationIterationsSnapshot = iterationsSpin ? iterationsSpin->value() : 20;
         animationSequenceReady = true;
     }
 
-    const bool realtime = animationRealtimeCheck && animationRealtimeCheck->isChecked();
+    const bool realtime = currentSequenceRealtime();
     if (!realtime && !animationPrecomputeReady) {
         if (!precomputeAnimationMasks(true)) {
             return;
@@ -1657,7 +1843,13 @@ void MainWindow::onPlayAnimationClicked() {
     animationComputeLimitedWarned = false;
     animationRealtimeRunning = realtime;
     animationPlaybackRunning = !realtime;
-    animationParticlesSpin->setEnabled(false);
+    if (activeSequenceSource == SequenceSource::AnimationPreset) {
+        if (animationParticlesSpin) {
+            animationParticlesSpin->setEnabled(false);
+        }
+    } else if (pythonMaxPointsSpin) {
+        pythonMaxPointsSpin->setEnabled(false);
+    }
 
     if (animationTimer) {
         animationTimer->setInterval(animationTimerIntervalMs());
@@ -1665,13 +1857,61 @@ void MainWindow::onPlayAnimationClicked() {
     }
     updateAnimationControlsEnabledState();
 
+    const QString sourceLabel = activeSequenceSource == SequenceSource::PythonScript ? "Python" : "Animation";
     QString playbackMsg = realtime
-        ? "Animation realtime playback started."
-        : "Animation precomputed playback started.";
+        ? QString("%1 realtime playback started.").arg(sourceLabel)
+        : QString("%1 precomputed playback started.").arg(sourceLabel);
     if (!autoSendSlmEnabled) {
         playbackMsg += " Auto-send SLM is OFF, so frames update preview only.";
     }
     statusBar()->showMessage(playbackMsg, 4000);
+}
+
+void MainWindow::onPlayPythonSequenceClicked() {
+    activeSequenceSource = SequenceSource::PythonScript;
+
+    if (!animationSequenceReady || animationFramePoints.isEmpty()) {
+        if (!buildPythonSequenceFromUi(true)) {
+            return;
+        }
+        animationIterationsSnapshot = iterationsSpin ? iterationsSpin->value() : 20;
+        animationSequenceReady = true;
+    }
+
+    if (animationFramePoints.isEmpty()) {
+        QMessageBox::warning(this, "Python Script", "No frame points available to send.");
+        return;
+    }
+
+    if (isStaticSequence(animationFramePoints)) {
+        if (animationTimer) {
+            animationTimer->stop();
+        }
+        animationRealtimeRunning = false;
+        animationPlaybackRunning = false;
+        animationCurrentFrameIndex = 0;
+        animationComputeLimitedWarned = false;
+
+        const QVector<QPointF> &points = animationFramePoints.first();
+        updateAnimationPreviewLabels(points);
+        replaceGridWithPoints(points);
+
+        QImage frameMask;
+        QString error;
+        if (!runGsForTargetPoints(points, animationIterationsSnapshot, frameMask, &error)) {
+            QMessageBox::warning(this, "Python GS", error.isEmpty() ? "Failed to generate GS frame." : error);
+            return;
+        }
+
+        currentMask = frameMask;
+        updatePhasePreview();
+        sendToSLM();
+        updateAnimationControlsEnabledState();
+        statusBar()->showMessage("Static Python pattern sent to SLM.", 4000);
+        return;
+    }
+
+    onPlayAnimationClicked();
 }
 
 void MainWindow::onStopAnimationClicked() {
@@ -1680,10 +1920,19 @@ void MainWindow::onStopAnimationClicked() {
     }
     animationRealtimeRunning = false;
     animationPlaybackRunning = false;
-    animationParticlesSpin->setEnabled(true);
+    if (animationParticlesSpin) {
+        animationParticlesSpin->setEnabled(true);
+    }
+    if (pythonMaxPointsSpin) {
+        pythonMaxPointsSpin->setEnabled(true);
+    }
     clearAnimationSequenceState(false);
     updateAnimationControlsEnabledState();
     statusBar()->showMessage("Animation stopped.", 3000);
+}
+
+void MainWindow::onStopPythonSequenceClicked() {
+    onStopAnimationClicked();
 }
 
 void MainWindow::onResetAnimationClicked() {
@@ -1692,10 +1941,38 @@ void MainWindow::onResetAnimationClicked() {
     }
     animationRealtimeRunning = false;
     animationPlaybackRunning = false;
-    animationParticlesSpin->setEnabled(true);
+    if (animationParticlesSpin) {
+        animationParticlesSpin->setEnabled(true);
+    }
+    if (pythonMaxPointsSpin) {
+        pythonMaxPointsSpin->setEnabled(true);
+    }
     clearAnimationSequenceState(true);
     updateAnimationControlsEnabledState();
     statusBar()->showMessage("Animation reset.", 3000);
+}
+
+void MainWindow::onResetPythonSequenceClicked() {
+    onResetAnimationClicked();
+}
+
+void MainWindow::onPythonTrapSelectionChanged(int index) {
+    Q_UNUSED(index);
+
+    if (!pythonTrapSelectorCombo) {
+        selectedSequenceTrapIndexOneBased = -1;
+    } else {
+        selectedSequenceTrapIndexOneBased = pythonTrapSelectorCombo->currentData().toInt();
+    }
+
+    if (animationSequenceReady && !animationFramePoints.isEmpty()) {
+        const int safeIndex = qBound(0, animationCurrentFrameIndex, animationFramePoints.size() - 1);
+        applyTrapHighlightForCurrentFrame(animationFramePoints.at(safeIndex));
+        updateAnimationPreviewLabels(animationFramePoints.at(safeIndex));
+        if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
+    }
 }
 
 void MainWindow::onAnimationTimerTimeout() {
@@ -1737,7 +2014,10 @@ void MainWindow::onAnimationTimerTimeout() {
             animationRealtimeRunning = false;
             animationPlaybackRunning = false;
             updateAnimationControlsEnabledState();
-            QMessageBox::warning(this, "Animation GS", error.isEmpty() ? "Failed to generate GS frame." : error);
+            const QString title = activeSequenceSource == SequenceSource::PythonScript
+                ? QString("Python GS")
+                : QString("Animation GS");
+            QMessageBox::warning(this, title, error.isEmpty() ? "Failed to generate GS frame." : error);
             return;
         }
 
@@ -1770,8 +2050,71 @@ void MainWindow::onAnimationTimerTimeout() {
     ++animationCurrentFrameIndex;
 }
 
+void MainWindow::populatePythonTrapSelector() {
+    if (!pythonTrapSelectorCombo) {
+        return;
+    }
+
+    int maxPoints = 0;
+    for (const QVector<QPointF> &frame : animationFramePoints) {
+        maxPoints = qMax(maxPoints, frame.size());
+    }
+
+    pythonTrapSelectorCombo->blockSignals(true);
+    pythonTrapSelectorCombo->clear();
+    pythonTrapSelectorCombo->addItem("None", -1);
+    for (int i = 1; i <= maxPoints; ++i) {
+        pythonTrapSelectorCombo->addItem(QString("Trap %1").arg(i), i);
+    }
+
+    const int requestedId = selectedSequenceTrapIndexOneBased;
+    int setIndex = 0;
+    if (requestedId > 0) {
+        const int found = pythonTrapSelectorCombo->findData(requestedId);
+        if (found >= 0) {
+            setIndex = found;
+        } else {
+            selectedSequenceTrapIndexOneBased = -1;
+        }
+    }
+    pythonTrapSelectorCombo->setCurrentIndex(setIndex);
+    pythonTrapSelectorCombo->blockSignals(false);
+}
+
+void MainWindow::applyTrapHighlightForCurrentFrame(const QVector<QPointF> &points) {
+    if (selectedSequenceTrapIndexOneBased > 0 &&
+        selectedSequenceTrapIndexOneBased <= points.size()) {
+        selectedPointId = selectedSequenceTrapIndexOneBased;
+        for (int row = 0; row < trapTable->rowCount(); ++row) {
+            if (trapTable->item(row, 0) && trapTable->item(row, 0)->text().toInt() == selectedPointId) {
+                trapTable->selectRow(row);
+                return;
+            }
+        }
+    } else {
+        selectedPointId = -1;
+        if (trapTable) {
+            trapTable->clearSelection();
+        }
+    }
+}
+
+bool MainWindow::currentSequenceRealtime() const {
+    if (activeSequenceSource == SequenceSource::PythonScript) {
+        return pythonRealtimeCheck && pythonRealtimeCheck->isChecked();
+    }
+    return animationRealtimeCheck && animationRealtimeCheck->isChecked();
+}
+
+int MainWindow::currentSequenceFps() const {
+    if (activeSequenceSource == SequenceSource::PythonScript) {
+        return pythonFpsSpin ? qMax(1, pythonFpsSpin->value()) : 30;
+    }
+    return animationFpsSpin ? qMax(1, animationFpsSpin->value()) : 30;
+}
+
 int MainWindow::animationTimerIntervalMs() const {
-    const int fps = animationFpsSpin ? qMax(1, animationFpsSpin->value()) : 30;
+    const int fps = currentSequenceFps();
     return qMax(1, static_cast<int>(1000.0 / static_cast<double>(fps)));
 }
 
@@ -1798,9 +2141,39 @@ void MainWindow::updateAnimationControlsEnabledState() {
     if (animationRealtimeCheck) {
         animationRealtimeCheck->setEnabled(!running);
     }
+    if (pythonGenerateBtn) {
+        pythonGenerateBtn->setEnabled(!running);
+    }
+    if (pythonPlaySendBtn) {
+        pythonPlaySendBtn->setEnabled(!running && animationSequenceReady);
+    }
+    if (pythonStopBtn) {
+        pythonStopBtn->setEnabled(running);
+    }
+    if (pythonResetBtn) {
+        pythonResetBtn->setEnabled(!running || animationSequenceReady);
+    }
+    if (pythonFpsSpin) {
+        pythonFpsSpin->setEnabled(!running);
+    }
+    if (pythonFrameCountSpin) {
+        pythonFrameCountSpin->setEnabled(!running);
+    }
+    if (pythonMaxPointsSpin) {
+        pythonMaxPointsSpin->setEnabled(!running);
+    }
+    if (pythonRealtimeCheck) {
+        pythonRealtimeCheck->setEnabled(!running);
+    }
+    if (pythonTrapSelectorCombo) {
+        pythonTrapSelectorCombo->setEnabled(!running && activeSequenceSource == SequenceSource::PythonScript);
+    }
+    if (pythonCodeEditor) {
+        pythonCodeEditor->setReadOnly(running);
+    }
 }
 
-QImage MainWindow::buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle) const {
+QImage MainWindow::buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle, int highlightIndexOneBased) const {
     QImage image(camWidth, camHeight, QImage::Format_RGB32);
     image.fill(Qt::black);
     QPainter painter(&image);
@@ -1814,10 +2187,19 @@ QImage MainWindow::buildAnimationPreviewImage(const QVector<QPointF> &points, bo
     const double halfH = static_cast<double>(camHeight) / 2.0;
     const int radius = cameraStyle ? qMax(3, qMin(camWidth, camHeight) / 90) : qMax(2, qMin(camWidth, camHeight) / 120);
 
-    for (const QPointF &p : points) {
+    for (int i = 0; i < points.size(); ++i) {
+        const QPointF &p = points.at(i);
         const QPointF imagePoint(halfW + p.x(), halfH - p.y());
         const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), camWidth - 1);
         const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), camHeight - 1);
+
+        if (highlightIndexOneBased > 0 && (i + 1) == highlightIndexOneBased) {
+            painter.setPen(QPen(QColor(120, 255, 120, 220), cameraStyle ? 2.5 : 2.0));
+            painter.setBrush(QBrush(QColor(120, 255, 120, 90)));
+            painter.drawEllipse(QPoint(px, py), radius + 3, radius + 3);
+            painter.setPen(QPen(color, cameraStyle ? 2.0 : 1.0));
+            painter.setBrush(QBrush(cameraStyle ? QColor(80, 190, 255, 110) : QColor(255, 255, 255, 200)));
+        }
         painter.drawEllipse(QPoint(px, py), radius, radius);
     }
 
@@ -1825,15 +2207,26 @@ QImage MainWindow::buildAnimationPreviewImage(const QVector<QPointF> &points, bo
 }
 
 void MainWindow::updateAnimationPreviewLabels(const QVector<QPointF> &points) {
+    const int highlightIndex = selectedSequenceTrapIndexOneBased;
     if (animationIntensityPreviewLabel) {
-        const QImage intensityImg = buildAnimationPreviewImage(points, false);
+        const QImage intensityImg = buildAnimationPreviewImage(points, false, highlightIndex);
         animationIntensityPreviewLabel->setPixmap(QPixmap::fromImage(intensityImg).scaled(
             animationIntensityPreviewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     }
     if (animationCameraPreviewLabel) {
-        const QImage cameraImg = buildAnimationPreviewImage(points, true);
+        const QImage cameraImg = buildAnimationPreviewImage(points, true, highlightIndex);
         animationCameraPreviewLabel->setPixmap(QPixmap::fromImage(cameraImg).scaled(
             animationCameraPreviewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+    if (pythonIntensityPreviewLabel) {
+        const QImage intensityImg = buildAnimationPreviewImage(points, false, highlightIndex);
+        pythonIntensityPreviewLabel->setPixmap(QPixmap::fromImage(intensityImg).scaled(
+            pythonIntensityPreviewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
+    if (pythonCameraPreviewLabel) {
+        const QImage cameraImg = buildAnimationPreviewImage(points, true, highlightIndex);
+        pythonCameraPreviewLabel->setPixmap(QPixmap::fromImage(cameraImg).scaled(
+            pythonCameraPreviewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     }
 }
 
@@ -1873,6 +2266,62 @@ bool MainWindow::buildAnimationSequenceFromUi(bool showWarnings) {
     animationSequenceReady = true;
     animationPrecomputeReady = false;
     animationPrecomputedMasks.clear();
+    activeSequenceSource = SequenceSource::AnimationPreset;
+    selectedSequenceTrapIndexOneBased = -1;
+    return true;
+}
+
+bool MainWindow::buildPythonSequenceFromUi(bool showWarnings) {
+    if (!pythonCodeEditor || !pythonFrameCountSpin || !pythonMaxPointsSpin) {
+        return false;
+    }
+
+    if (!pythonScriptEngine || !pythonScriptEngine->isReady()) {
+        const QString msg = (pythonScriptEngine && !pythonScriptEngine->initError().isEmpty())
+            ? pythonScriptEngine->initError()
+            : QString("Embedded Python runtime is unavailable.");
+        if (pythonStatusLabel) {
+            pythonStatusLabel->setText(msg);
+        }
+        if (showWarnings) {
+            QMessageBox::warning(this, "Python Script", msg);
+        }
+        return false;
+    }
+
+    PythonTrapScriptResult result = pythonScriptEngine->runScript(
+        pythonCodeEditor->toPlainText(),
+        pythonFrameCountSpin->value(),
+        camWidth,
+        camHeight,
+        pythonMaxPointsSpin->value());
+
+    if (!result.success) {
+        if (pythonStatusLabel) {
+            pythonStatusLabel->setText(result.errorMessage);
+        }
+        if (showWarnings) {
+            QMessageBox::warning(this, "Python Script", result.errorMessage);
+        }
+        return false;
+    }
+
+    animationFramePoints = result.frames;
+    animationCurrentFrameIndex = 0;
+    animationSequenceReady = true;
+    animationPrecomputeReady = false;
+    animationPrecomputedMasks.clear();
+    activeSequenceSource = SequenceSource::PythonScript;
+    populatePythonTrapSelector();
+
+    if (pythonStatusLabel) {
+        QString status = QString("Generated %1 frame(s) from Python script.").arg(animationFramePoints.size());
+        if (!result.warningMessage.isEmpty()) {
+            status += " " + result.warningMessage;
+        }
+        pythonStatusLabel->setText(status);
+    }
+
     return true;
 }
 
@@ -1892,17 +2341,31 @@ bool MainWindow::precomputeAnimationMasks(bool showWarnings) {
         : (iterationsSpin ? iterationsSpin->value() : 20);
     animationIterationsSnapshot = iterSnapshot;
 
-    animationParticlesSpin->setEnabled(false);
+    if (activeSequenceSource == SequenceSource::AnimationPreset) {
+        if (animationParticlesSpin) {
+            animationParticlesSpin->setEnabled(false);
+        }
+    } else if (pythonMaxPointsSpin) {
+        pythonMaxPointsSpin->setEnabled(false);
+    }
     for (int i = 0; i < animationFramePoints.size(); ++i) {
         QImage frameMask;
         QString error;
         if (!runGsForTargetPoints(animationFramePoints.at(i), iterSnapshot, frameMask, &error)) {
             animationPrecomputedMasks.clear();
             animationPrecomputeReady = false;
-            animationParticlesSpin->setEnabled(true);
+            if (animationParticlesSpin) {
+                animationParticlesSpin->setEnabled(true);
+            }
+            if (pythonMaxPointsSpin) {
+                pythonMaxPointsSpin->setEnabled(true);
+            }
             if (showWarnings) {
+                const QString title = activeSequenceSource == SequenceSource::PythonScript
+                    ? QString("Python Precompute")
+                    : QString("Animation Precompute");
                 QMessageBox::warning(this,
-                                     "Animation Precompute",
+                                     title,
                                      QString("Failed at frame %1/%2: %3")
                                          .arg(i + 1)
                                          .arg(animationFramePoints.size())
@@ -1914,8 +2377,11 @@ bool MainWindow::precomputeAnimationMasks(bool showWarnings) {
     }
 
     animationPrecomputeReady = true;
+    const QString sourceLabel = activeSequenceSource == SequenceSource::PythonScript ? "python" : "animation";
     statusBar()->showMessage(
-        QString("Precomputed %1 phase masks for animation playback.").arg(animationPrecomputedMasks.size()),
+        QString("Precomputed %1 phase masks for %2 playback.")
+            .arg(animationPrecomputedMasks.size())
+            .arg(sourceLabel),
         5000);
     return true;
 }
@@ -1927,6 +2393,14 @@ void MainWindow::clearAnimationSequenceState(bool clearPreviews) {
     animationSequenceReady = false;
     animationPrecomputeReady = false;
     animationComputeLimitedWarned = false;
+    selectedSequenceTrapIndexOneBased = -1;
+    if (pythonTrapSelectorCombo) {
+        pythonTrapSelectorCombo->blockSignals(true);
+        pythonTrapSelectorCombo->clear();
+        pythonTrapSelectorCombo->addItem("None", -1);
+        pythonTrapSelectorCombo->setCurrentIndex(0);
+        pythonTrapSelectorCombo->blockSignals(false);
+    }
 
     if (clearPreviews) {
         if (animationIntensityPreviewLabel) {
@@ -1937,7 +2411,39 @@ void MainWindow::clearAnimationSequenceState(bool clearPreviews) {
             animationCameraPreviewLabel->clear();
             animationCameraPreviewLabel->setText("No frame");
         }
+        if (pythonIntensityPreviewLabel) {
+            pythonIntensityPreviewLabel->clear();
+            pythonIntensityPreviewLabel->setText("No frame");
+        }
+        if (pythonCameraPreviewLabel) {
+            pythonCameraPreviewLabel->clear();
+            pythonCameraPreviewLabel->setText("No frame");
+        }
     }
+}
+
+QString MainWindow::defaultPythonScriptTemplate() const {
+    return QString::fromUtf8(
+        "# Static-first script (recommended): return a single frame.\n"
+        "# The app repeats it automatically unless you define motion with build_frames.\n"
+        "\n"
+        "def build_pattern(width, height):\n"
+        "    return hot.pattern.circle(point_count=12)\n"
+        "\n"
+        "# Optional motion example:\n"
+        "# import math\n"
+        "# def build_frames(frame_count, width, height):\n"
+        "#     frames = []\n"
+        "#     radius = min(width, height) * 0.25\n"
+        "#     for f in range(frame_count):\n"
+        "#         t = 0.0 if frame_count <= 1 else f / float(frame_count - 1)\n"
+        "#         rot = 2.0 * math.pi * t\n"
+        "#         frame = []\n"
+        "#         for i in range(12):\n"
+        "#             a = rot + 2.0 * math.pi * i / 12\n"
+        "#             frame.append([radius * math.cos(a), radius * math.sin(a)])\n"
+        "#         frames.append(frame)\n"
+        "#     return frames\n");
 }
 
 void MainWindow::toggleTheme() {

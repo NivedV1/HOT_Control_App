@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Python Trap Scripting Guide</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #171a21;
+      --text: #e8ecf3;
+      --muted: #aab4c5;
+      --accent: #6fb1ff;
+      --border: #2b3342;
+      --code-bg: #0b0d12;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(1200px 700px at 20% -20%, #1a2230 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 16px 56px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #1e2636, #161b25);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 18px;
+    }
+    h1, h2, h3 { line-height: 1.25; margin: 0 0 10px; }
+    h1 { font-size: 1.9rem; }
+    h2 {
+      margin-top: 26px;
+      font-size: 1.3rem;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #121722;
+      padding: 0.08rem 0.35rem;
+      border-radius: 5px;
+      color: #cfe4ff;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      overflow-x: auto;
+      margin: 10px 0 14px;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: #f3f6ff;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+    ul, ol { margin-top: 6px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .chip {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #141a24;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>Python Trap Scripting Guide</h1>
+      <p class="muted">Static-first scripting for HOT: write simple static patterns quickly, and only use animation logic when you want moving spots.</p>
+    </section>
+
+    <h2>What This Feature Does</h2>
+    <div class="card">
+      <ul>
+        <li><strong>Default</strong>: return one static pattern.</li>
+        <li><strong>Optional</strong>: return multiple frames for motion.</li>
+        <li>Both paths use the same GS + SLM pipeline.</li>
+      </ul>
+    </div>
+
+    <h2>Script Entry Points</h2>
+    <div class="card">
+      <ol>
+        <li><code>build_pattern(width, height)</code> (recommended for static)</li>
+        <li><code>build_frames(frame_count, width, height)</code> (for motion)</li>
+      </ol>
+      <p><strong>Precedence:</strong> if <code>build_pattern</code> exists, it is used. Otherwise <code>build_frames</code> is used.</p>
+      <p>If a single frame is returned, the app treats it as static and repeats it.</p>
+    </div>
+
+    <h2>Built-in Pattern Helpers</h2>
+    <div class="grid">
+      <div class="chip"><code>hot.pattern.circle(...)</code></div>
+      <div class="chip"><code>hot.pattern.triangle(...)</code></div>
+      <div class="chip"><code>hot.pattern.square(...)</code></div>
+      <div class="chip"><code>hot.pattern.rectangle(...)</code></div>
+      <div class="chip"><code>hot.pattern.hexagon(...)</code></div>
+      <div class="chip"><code>hot.pattern.two_spots(...)</code></div>
+      <div class="chip"><code>hot.pattern.star(...)</code></div>
+      <div class="chip"><code>hot.pattern.planet_moon(...)</code></div>
+      <div class="chip"><code>hot.pattern.grid(...)</code></div>
+    </div>
+
+    <h2>Helper Signatures</h2>
+    <pre><code>hot.pattern.circle(point_count=12, radius=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.triangle(point_count=9, scale=None, rotation_deg=0, x_shift=0, y_shift=0, symmetric=True)
+hot.pattern.square(point_count=12, size=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.rectangle(point_count=16, width=None, height=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.hexagon(point_count=18, radius=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.two_spots(distance=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.star(point_count=20, star_points=5, outer_radius=None, inner_radius=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.planet_moon(point_count=20, planet_radius=None, moon_radius=None, distance=None, rotation_deg=0, x_shift=0, y_shift=0)
+hot.pattern.grid(rows=4, cols=4, row_spacing=None, col_spacing=None, rotation_deg=0, x_shift=0, y_shift=0, center=True)</code></pre>
+
+    <h2>Coordinate System</h2>
+    <div class="card">
+      <ul>
+        <li><code>(0, 0)</code> is the center.</li>
+        <li><code>+x</code> is right, <code>+y</code> is up.</li>
+        <li>Bounds are roughly <code>[-width/2, +width/2]</code>, <code>[-height/2, +height/2]</code>.</li>
+        <li>Out-of-range points are clamped with warning text.</li>
+      </ul>
+    </div>
+
+    <h2>Python Tab Workflow</h2>
+    <div class="card">
+      <ol>
+        <li>Write code in editor.</li>
+        <li>Click <strong>Run Code</strong> (build sequence).</li>
+        <li>Click <strong>Send</strong> (play/send sequence).</li>
+      </ol>
+    </div>
+
+    <h2>Examples</h2>
+    <h3>1. Simple static circle</h3>
+    <pre><code>def build_pattern(width, height):
+    return hot.pattern.circle(point_count=16)</code></pre>
+
+    <h3>2. Static rectangle</h3>
+    <pre><code>def build_pattern(width, height):
+    return hot.pattern.rectangle(point_count=20, width=220, height=120)</code></pre>
+
+    <h3>3. Static hexagon + center point</h3>
+    <pre><code>def build_pattern(width, height):
+    ring = hot.pattern.hexagon(point_count=18)
+    return ring + [[0, 0]]</code></pre>
+
+    <h3>4. Square corners + surrounding 6-point circle</h3>
+    <pre><code>def build_pattern(width, height):
+    square = hot.pattern.square(point_count=4, size=min(width, height) * 0.35, rotation_deg=45)
+    circle = hot.pattern.circle(point_count=6, radius=min(width, height) * 0.30)
+    return square + circle</code></pre>
+
+    <h3>5. Optional motion (rotating circle)</h3>
+    <pre><code>import math
+
+def build_frames(frame_count, width, height):
+    frames = []
+    r = min(width, height) * 0.25
+    n = 12
+
+    for f in range(frame_count):
+        t = 0.0 if frame_count &lt;= 1 else f / float(frame_count - 1)
+        rot = 2.0 * math.pi * t
+        frame = []
+        for i in range(n):
+            a = rot + 2.0 * math.pi * i / n
+            frame.append([r * math.cos(a), r * math.sin(a)])
+        frames.append(frame)
+
+    return frames</code></pre>
+
+    <h2>Common Errors</h2>
+    <div class="card">
+      <ul>
+        <li><code>Script must define callable build_pattern(...) or build_frames(...)</code>: add one valid entrypoint.</li>
+        <li><code>Frame N has no trap points</code>: each returned frame must contain at least one <code>[x, y]</code>.</li>
+        <li><code>Point M in frame N must be [x, y] numeric coordinates</code>: use numeric pairs only.</li>
+      </ul>
+    </div>
+
+    <h2>Notes</h2>
+    <div class="card">
+      <ul>
+        <li>Use <code>build_pattern</code> for most static use cases.</li>
+        <li>Use <code>build_frames</code> only when you want motion.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
