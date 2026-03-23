@@ -35,7 +35,7 @@ private:
     QDoubleSpinBox *periodSpin;
     QDoubleSpinBox *angleSpin;
     QDoubleSpinBox *focalLengthSpin;
-    QDoubleSpinBox *coneAngleSpin;
+    QDoubleSpinBox *radialPeriodSpin;
     QSpinBox *topologicalChargeSpin;
     QDoubleSpinBox *amplitudeSpin;
     

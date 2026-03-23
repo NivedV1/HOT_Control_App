@@ -48,10 +48,10 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     focalLengthSpin->setValue(500.0);
     focalLengthSpin->setSuffix(" pixels");
     
-    coneAngleSpin = new ArrowDoubleSpinBox();
-    coneAngleSpin->setRange(0.1, 45.0);
-    coneAngleSpin->setValue(5.0);
-    coneAngleSpin->setSuffix(" °");
+    radialPeriodSpin = new ArrowDoubleSpinBox();
+    radialPeriodSpin->setRange(2.0, 1000.0);
+    radialPeriodSpin->setValue(50.0);
+    radialPeriodSpin->setSuffix(" pixels");
     
     topologicalChargeSpin = new ArrowSpinBox();
     topologicalChargeSpin->setRange(1, 10);
@@ -66,7 +66,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     form->addRow("Grating Period:", periodSpin);
     form->addRow("Rotation Angle:", angleSpin);
     form->addRow("Focal Length:", focalLengthSpin);
-    form->addRow("Cone Angle:", coneAngleSpin);
+    form->addRow("Radial Period:", radialPeriodSpin);
     form->addRow("Topological Charge:", topologicalChargeSpin);
     form->addRow("Amplitude:", amplitudeSpin);
     settingsGroup->setLayout(form);
@@ -178,6 +178,31 @@ void HologramDialog::generatePattern() {
                 double mod = std::fmod(proj, period);
                 if (mod < 0) mod += period;
                 row[x] = (mod < (period/2 )) ? 0 : 128; // 128 = Pi phase shift
+            } else if (type == 2) {
+                // 3. FRESNEL LENS
+                // Centered quadratic phase: phi = (pi / f) * (cx^2 + cy^2)
+                const double f = focalLengthSpin->value();
+                double phi = (M_PI / f) * (cx * cx + cy * cy);
+                phi = std::fmod(phi, 2.0 * M_PI);
+                if (phi < 0.0) phi += 2.0 * M_PI;
+                row[x] = static_cast<uchar>((phi / (2.0 * M_PI)) * 255.0);
+            } else if (type == 3) {
+                // 4. AXICON
+                // Radial-period phase ramp: phi = 2pi * r / radialPeriod
+                const double radialPeriod = radialPeriodSpin->value();
+                double r = std::sqrt(cx * cx + cy * cy);
+                double phi = 2.0 * M_PI * (r / radialPeriod);
+                phi = std::fmod(phi, 2.0 * M_PI);
+                if (phi < 0.0) phi += 2.0 * M_PI;
+                row[x] = static_cast<uchar>((phi / (2.0 * M_PI)) * 255.0);
+            } else if (type == 4) {
+                // 5. VORTEX BEAM
+                // Azimuthal phase winding: phi = l * atan2(cy, cx)
+                const int l = topologicalChargeSpin->value();
+                double phi = l * std::atan2(cy, cx);
+                phi = std::fmod(phi, 2.0 * M_PI);
+                if (phi < 0.0) phi += 2.0 * M_PI;
+                row[x] = static_cast<uchar>((phi / (2.0 * M_PI)) * 255.0);
             } else if (type == 5) {
                 // 6. SINUSOIDAL GRATING
                 // Phase modulation: phi = pi + A*pi*sin(2*pi*proj/period)
@@ -248,7 +273,7 @@ void HologramDialog::updateParameterVisibility() {
     periodSpin->setVisible(false);
     angleSpin->setVisible(false);
     focalLengthSpin->setVisible(false);
-    coneAngleSpin->setVisible(false);
+    radialPeriodSpin->setVisible(false);
     topologicalChargeSpin->setVisible(false);
     amplitudeSpin->setVisible(false);
     
@@ -263,7 +288,7 @@ void HologramDialog::updateParameterVisibility() {
             focalLengthSpin->setVisible(true);
             break;
         case 3: // Axicon
-            coneAngleSpin->setVisible(true);
+            radialPeriodSpin->setVisible(true);
             break;
         case 4: // Vortex Beam
             topologicalChargeSpin->setVisible(true);
