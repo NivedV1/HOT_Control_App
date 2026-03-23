@@ -785,7 +785,7 @@ PythonTrapScriptResult PythonTrapScriptEngine::runScript(const QString &script,
         return result;
     }
 
-    const int safeRequestedFrames = qBound(1, requestedFrameCount, 1000);
+    int safeRequestedFrames = qBound(1, requestedFrameCount, 1000);
     const int safeMaxPoints = qBound(1, maxPointsPerFrame, 2000);
 
     gHelperCameraWidth = qMax(1, cameraWidth);
