@@ -154,6 +154,7 @@ bool prepareGsData(const GSAlgorithm::GSConfig &config,
     }
 
     if (config.slmPixelSizeUm <= 0.0 || config.camPixelSizeUm <= 0.0 ||
+        config.cameraImagingMagnification <= 0.0 ||
         config.wavelengthNm <= 0.0 || config.focalLengthMm <= 0.0) {
         result.error = "Optical/hardware settings must be positive before running GS.";
         return false;
@@ -172,8 +173,9 @@ bool prepareGsData(const GSAlgorithm::GSConfig &config,
 
     const double slmDx = config.slmPixelSizeUm * 1e-6;
     const double slmDy = config.slmPixelSizeUm * 1e-6;
-    const double camDx = config.camPixelSizeUm * 1e-6;
-    const double camDy = config.camPixelSizeUm * 1e-6;
+    const double effectiveCamPixelSizeUm = config.camPixelSizeUm / config.cameraImagingMagnification;
+    const double camDx = effectiveCamPixelSizeUm * 1e-6;
+    const double camDy = effectiveCamPixelSizeUm * 1e-6;
     const double wavelength = config.wavelengthNm * 1e-9;
     const double focalLength = config.focalLengthMm * 1e-3;
 

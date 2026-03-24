@@ -274,6 +274,7 @@ private:
     int udpPort = 9000;
     double laserWavelength = 1064.0;
     double fourierFocalLength = 100.0;
+    double cameraImagingMagnification = 1.0;
     bool isDarkMode = true;
     bool autoRunGsEnabled = false;
     bool autoSendSlmEnabled = false;

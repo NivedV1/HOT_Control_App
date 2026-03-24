@@ -54,6 +54,7 @@ This structure carries the physical and compute settings:
 - SLM pixel size in micrometers
 - camera width and height
 - camera pixel size in micrometers
+- camera imaging magnification
 - laser wavelength
 - Fourier lens focal length
 - iteration count
@@ -96,7 +97,7 @@ The app converts camera-space target points into the FFT grid used by the solver
 
 It computes:
 - SLM pixel pitch in meters
-- camera pixel pitch in meters
+- effective camera pixel pitch in meters
 - wavelength in meters
 - focal length in meters
 
@@ -107,6 +108,17 @@ Then it derives the focal-plane sampling interval:
 `focalDy = (wavelength * focalLength) / (slmHeight * slmDy)`
 
 Conceptually, this is the Fourier relationship between the SLM plane and the focal plane.
+
+The effective camera pixel pitch is:
+
+`effectiveCamPitch = cameraPixelSize / cameraImagingMagnification`
+
+This matters because the camera often sees the trap plane through extra imaging optics. In that case, the raw sensor pixel size is not the same as the trap-plane sampling pitch. The app therefore keeps:
+- Fourier lens focal length as the real physical lens value
+- camera pixel size as the real sensor pitch
+- camera imaging magnification as a separate calibration factor
+
+So if spot placement is off by a mostly uniform scale factor, correct the imaging magnification instead of entering a fake focal length.
 
 For each target point:
 - convert camera pixels to physical displacement

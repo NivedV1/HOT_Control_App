@@ -16,7 +16,7 @@ public:
     SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                    int camW, int camH, double camPix,
                    const QString &udpBindIp, int udpPort,
-                   double wave, double focal, int slmOutputMode,
+                   double wave, double focal, double cameraImagingMagnification, int slmOutputMode,
                    bool autoRunGsEnabled,
                    bool autoSendSlmEnabled,
                    int startingPhaseMaskMode,
@@ -54,6 +54,7 @@ public:
     // Optical Getters
     double getWavelength() const;
     double getFocalLength() const;
+    double getCameraImagingMagnification() const;
 
     // SLM Output Getters
     int getSlmOutputMode() const;
@@ -101,6 +102,7 @@ private:
     // Optics
     QDoubleSpinBox *waveSpin;
     QDoubleSpinBox *focalSpin;
+    QDoubleSpinBox *cameraMagnificationSpin;
 };
 
 #endif // SETTINGSDIALOG_H

@@ -20,7 +20,7 @@
 SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                int camW, int camH, double camPix,
                                const QString &udpBindIp, int udpPort,
-                               double wave, double focal, int slmOutputMode,
+                               double wave, double focal, double cameraImagingMagnification, int slmOutputMode,
                                bool autoRunGsEnabled,
                                bool autoSendSlmEnabled,
                                int startingPhaseMaskMode,
@@ -224,8 +224,16 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     focalSpin = new ArrowDoubleSpinBox(this); focalSpin->setRange(1.0, 1000.0); focalSpin->setDecimals(1);
     focalSpin->setSuffix(" mm"); focalSpin->setValue(focal);
 
+    cameraMagnificationSpin = new ArrowDoubleSpinBox(this);
+    cameraMagnificationSpin->setRange(0.01, 1000.0);
+    cameraMagnificationSpin->setDecimals(3);
+    cameraMagnificationSpin->setValue(qMax(0.01, cameraImagingMagnification));
+    cameraMagnificationSpin->setToolTip("Magnification between the trap plane and the camera sensor. "
+                                        "Use this to calibrate spot placement without changing the real Fourier lens focal length.");
+
     opticsForm->addRow("Laser Wavelength:", waveSpin);
-    opticsForm->addRow("Fourier Lens Focal Length:", focalSpin);
+    opticsForm->addRow("Fourier Lens Focal Length (physical):", focalSpin);
+    opticsForm->addRow("Camera Imaging Magnification:", cameraMagnificationSpin);
     opticsGroup->setLayout(opticsForm);
 
     QLabel *monitorHint = new QLabel("Monitor target is selected from Tools > Select Monitor.");
@@ -321,6 +329,7 @@ int SettingsDialog::getUdpPort() const { return udpPortSpin->value(); }
 // Optical Getters
 double SettingsDialog::getWavelength() const { return waveSpin->value(); }
 double SettingsDialog::getFocalLength() const { return focalSpin->value(); }
+double SettingsDialog::getCameraImagingMagnification() const { return cameraMagnificationSpin->value(); }
 
 // SLM Output Getter
 int SettingsDialog::getSlmOutputMode() const { return slmOutputModeCombo->currentIndex(); }

@@ -215,6 +215,7 @@ void appendGsRuntimeLogEntry(const QString &triggerLabel,
     out << "cam_resolution=" << config.camWidth << "x" << config.camHeight << "\n";
     out << "slm_pixel_size_um=" << QString::number(config.slmPixelSizeUm, 'f', 4) << "\n";
     out << "cam_pixel_size_um=" << QString::number(config.camPixelSizeUm, 'f', 4) << "\n";
+    out << "camera_imaging_magnification=" << QString::number(config.cameraImagingMagnification, 'f', 4) << "\n";
     out << "wavelength_nm=" << QString::number(config.wavelengthNm, 'f', 4) << "\n";
     out << "focal_length_mm=" << QString::number(config.focalLengthMm, 'f', 4) << "\n";
     out << "\n";
@@ -249,6 +250,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     udpPort = settings.value("Hardware/UDP_Port", 9000).toInt();
     laserWavelength = settings.value("Optical/Wavelength", 1064.0).toDouble();
     fourierFocalLength = settings.value("Optical/FocalLength", 100.0).toDouble();
+    cameraImagingMagnification = qMax(0.01, settings.value("Optical/CameraImagingMagnification", 1.0).toDouble());
     autoRunGsEnabled = settings.value("Hardware/AutoRunGS", false).toBool();
     autoSendSlmEnabled = settings.value("Hardware/AutoSendSLM", false).toBool();
     gsStartingPhaseMaskMode = settings.value("Hardware/GS_StartingPhaseMask", 0).toInt();
@@ -961,7 +963,8 @@ void MainWindow::openSettingsDialog() {
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
                           udpBindIp, udpPort,
-                          laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled,
+                          laserWavelength, fourierFocalLength, cameraImagingMagnification,
+                          slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled,
                           gsStartingPhaseMaskMode, gsComputeBackendMode, openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex,
                           currentCameraRotation, currentFlipX, saveCompressed, saveFollowsTransforms, currentFlipY, this);
 
@@ -983,6 +986,7 @@ void MainWindow::openSettingsDialog() {
         udpPort = dialog.getUdpPort();
         laserWavelength = dialog.getWavelength();
         fourierFocalLength = dialog.getFocalLength();
+        cameraImagingMagnification = dialog.getCameraImagingMagnification();
 
         QSettings settings(configPath(), QSettings::IniFormat);
 
@@ -996,6 +1000,7 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/UDP_BindIP", udpBindIp);
         settings.setValue("Hardware/UDP_Port", udpPort);
         settings.setValue("Optical/Wavelength", laserWavelength);
+        settings.setValue("Optical/CameraImagingMagnification", cameraImagingMagnification);
         slmOutputMode = dialog.getSlmOutputMode();
         autoRunGsEnabled = dialog.getAutoRunGsEnabled();
         autoSendSlmEnabled = dialog.getAutoSendSlmEnabled();
@@ -1283,6 +1288,7 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
     config.camWidth = camWidth;
     config.camHeight = camHeight;
     config.camPixelSizeUm = camPixelSize;
+    config.cameraImagingMagnification = cameraImagingMagnification;
     config.wavelengthNm = laserWavelength;
     config.focalLengthMm = fourierFocalLength;
     config.iterations = iterationsSpin ? iterationsSpin->value() : 20;
@@ -1454,6 +1460,7 @@ bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
     config.camWidth = camWidth;
     config.camHeight = camHeight;
     config.camPixelSizeUm = camPixelSize;
+    config.cameraImagingMagnification = cameraImagingMagnification;
     config.wavelengthNm = laserWavelength;
     config.focalLengthMm = fourierFocalLength;
     config.iterations = qMax(1, iterationsOverride);
@@ -1548,17 +1555,6 @@ void MainWindow::updateCameraFeed(const QImage &img) {
     lastCameraFrame = img.copy();
     QImage displayImg = img.convertToFormat(QImage::Format_ARGB32);
 
-    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
-        QTransform transform;
-        if (flipCameraX || flipCameraY) {
-            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
-        }
-        if (cameraViewRotationDegrees != 0) {
-            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
-        }
-        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
-    }
-
     if (overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
         QPainter painter(&displayImg);
         painter.setRenderHint(QPainter::Antialiasing, true);
@@ -1589,6 +1585,17 @@ void MainWindow::updateCameraFeed(const QImage &img) {
             painter.setBrush(QColor(80, 190, 255, 95));
             painter.drawEllipse(QPoint(px, py), pointRadius, pointRadius);
         }
+    }
+
+    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
+        QTransform transform;
+        if (flipCameraX || flipCameraY) {
+            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
+        }
+        if (cameraViewRotationDegrees != 0) {
+            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        }
+        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
     }
 
     cameraFeedLabel->setPixmap(QPixmap::fromImage(displayImg).scaled(

@@ -40,6 +40,7 @@ struct GSConfig {
     int camWidth = 0;
     int camHeight = 0;
     double camPixelSizeUm = 0.0;
+    double cameraImagingMagnification = 1.0;
 
     double wavelengthNm = 0.0;
     double focalLengthMm = 0.0;
