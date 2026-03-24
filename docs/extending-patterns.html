@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Extending Built-In Patterns</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --card: #171a21;
+      --text: #e8ecf3;
+      --muted: #aab4c5;
+      --accent: #6fb1ff;
+      --border: #2b3342;
+      --code-bg: #0b0d12;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: radial-gradient(1200px 700px at 20% -20%, #1a2230 0%, var(--bg) 45%);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 16px 56px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #1e2636, #161b25);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 18px;
+    }
+    h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 10px; }
+    h1 { font-size: 1.9rem; }
+    h2 {
+      margin-top: 26px;
+      font-size: 1.3rem;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
+    h3 {
+      margin-top: 18px;
+      font-size: 1.05rem;
+    }
+    h4 {
+      margin-top: 14px;
+      font-size: 0.98rem;
+      color: #d7e6ff;
+    }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #121722;
+      padding: 0.08rem 0.35rem;
+      border-radius: 5px;
+      color: #cfe4ff;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      overflow-x: auto;
+      margin: 10px 0 14px;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: #f3f6ff;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+    ul, ol { margin-top: 6px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .chip {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #141a24;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>Extending Built-In Patterns</h1>
+      <p class="muted">Developer guide for adding new target-grid presets and new hologram generator pattern types in the HOT Control App.</p>
+    </section>
+
+    <h2>What This Guide Covers</h2>
+    <div class="card">
+      <ol>
+        <li>Adding a new target-grid pattern to the <code>Pattern</code> tab shown in the main window controls below the grid.</li>
+        <li>Adding a new hologram generator pattern type to the standard phase-mask generator dialog using custom C++ code.</li>
+      </ol>
+      <p>This guide is written for someone editing the source for the first time. It focuses on which files to change, which edits are required, and which extra updates are recommended to keep the feature complete and maintainable.</p>
+    </div>
+
+    <h2>Pattern Systems In This App</h2>
+    <div class="grid">
+      <div class="chip"><strong>Target-grid patterns</strong><br />Generate trap point coordinates such as circle, triangle, star, or grid.</div>
+      <div class="chip"><strong>Hologram generator patterns</strong><br />Generate a grayscale phase image pixel-by-pixel for the SLM.</div>
+    </div>
+    <p>They are separate features and are extended in different files.</p>
+
+    <h2>Adding A New Target-Grid Pattern</h2>
+
+    <h3>Where This UI Lives</h3>
+    <div class="card">
+      <p>The UI that the user sees "below the grid" is part of the tabbed controls in the main window.</p>
+      <p>In <code>src/ui/mainwindow.cpp</code>, the pattern editor is attached here:</p>
+      <pre><code>patternPresetsWidget = new PatternPresetsWidget(camWidth, camHeight);
+targetModeTabs-&gt;addTab(patternPresetsWidget, "Pattern");</code></pre>
+      <p>Most of the time, you do not need to edit <code>mainwindow.cpp</code> to add a new pattern preset. This file only matters if you want to move the entire pattern UI to a different place or change how tabs are arranged.</p>
+    </div>
+
+    <h3>Required Files</h3>
+    <div class="card">
+      <ul>
+        <li><code>src/ui/components/patternpresetswidget.h</code></li>
+        <li><code>src/ui/components/patternpresetswidget.cpp</code></li>
+        <li><code>src/core/patterngenerator.h</code></li>
+        <li><code>src/core/patterngenerator.cpp</code></li>
+      </ul>
+    </div>
+
+    <h3>1. Add A New Preset Index In <code>patternpresetswidget.h</code></h3>
+    <div class="card">
+      <p>This widget owns the pattern-selection UI. Add three things here:</p>
+      <ol>
+        <li>A new value in <code>PresetIndex</code></li>
+        <li>A declaration for a new page builder such as <code>createPentagonPage()</code></li>
+        <li>Member variables for the controls used by the new pattern</li>
+      </ol>
+      <pre><code>enum PresetIndex {
+    CircleIndex = 0,
+    TriangleIndex,
+    SquareIndex,
+    RectangleIndex,
+    HexagonIndex,
+    TwoSpotsIndex,
+    StarIndex,
+    PlanetAndMoonIndex,
+    GridIndex,
+    PentagonIndex
+};
+
+QWidget *createPentagonPage();
+
+QDoubleSpinBox *pentagonRadiusSpin;
+QSpinBox *pentagonPointsSpin;
+QDoubleSpinBox *pentagonRotationSpin;
+QDoubleSpinBox *pentagonXShiftSpin;
+QDoubleSpinBox *pentagonYShiftSpin;</code></pre>
+      <p>Keep the enum order aligned with the combo-box order you will add in the <code>.cpp</code> file.</p>
+    </div>
+
+    <h3>2. Add The New UI Page In <code>patternpresetswidget.cpp</code></h3>
+
+    <h4>A. Initialize The New Widget Pointers</h4>
+    <p>In the constructor initializer list, initialize the new members to <code>nullptr</code>.</p>
+
+    <h4>B. Add The Preset Name To The Drop-Down</h4>
+    <pre><code>presetCombo-&gt;addItems({
+    "Circle",
+    "Triangle",
+    "Square",
+    "Rectangle",
+    "Hexagon",
+    "Two Spots",
+    "Star",
+    "Planet &amp; Moon",
+    "N*M Grid",
+    "Pentagon"
+});</code></pre>
+
+    <h4>C. Add The Page To <code>optionsStack</code></h4>
+    <div class="card">
+      <p>Add <code>optionsStack-&gt;addWidget(createPentagonPage());</code></p>
+      <p>The order must match:</p>
+      <ul>
+        <li><code>PresetIndex</code></li>
+        <li>combo-box items</li>
+        <li>stacked-widget pages</li>
+      </ul>
+      <p>If one of these is out of sync, the wrong page may be shown or the wrong pattern may be generated.</p>
+    </div>
+
+    <h4>D. Build The Form Controls</h4>
+    <pre><code>QWidget *PatternPresetsWidget::createPentagonPage() {
+    QGroupBox *group = new QGroupBox("Pentagon");
+    QFormLayout *form = new QFormLayout(group);
+
+    pentagonRadiusSpin = new QDoubleSpinBox();
+    pentagonPointsSpin = new QSpinBox();
+    pentagonRotationSpin = new QDoubleSpinBox();
+    pentagonXShiftSpin = new QDoubleSpinBox();
+    pentagonYShiftSpin = new QDoubleSpinBox();
+
+    form-&gt;addRow("Radius:", pentagonRadiusSpin);
+    form-&gt;addRow("No. of points:", pentagonPointsSpin);
+    form-&gt;addRow("Rotation (deg):", pentagonRotationSpin);
+    form-&gt;addRow("X shift:", pentagonXShiftSpin);
+    form-&gt;addRow("Y shift:", pentagonYShiftSpin);
+
+    return group;
+}</code></pre>
+
+    <h4>E. Read The New Controls In <code>onGenerateClicked()</code></h4>
+    <pre><code>case PentagonIndex:
+    request.preset = PatternGenerator::Preset::Pentagon;
+    request.radius = pentagonRadiusSpin-&gt;value();
+    request.pointCount = pentagonPointsSpin-&gt;value();
+    request.rotationDeg = pentagonRotationSpin-&gt;value();
+    request.xShift = pentagonXShiftSpin-&gt;value();
+    request.yShift = pentagonYShiftSpin-&gt;value();
+    break;</code></pre>
+    <p>This step is required. If you add controls but do not read them here, the UI will show the preset but nothing meaningful will be sent to the generator.</p>
+
+    <h4>F. Update <code>presetName()</code> And <code>presetDetails()</code></h4>
+    <div class="card">
+      <p>These are not strictly required for geometry generation, but they are strongly recommended.</p>
+      <ul>
+        <li><code>presetName()</code> supplies the readable preset name used in status/summary text.</li>
+        <li><code>presetDetails()</code> records parameter values in a compact string useful for logs, debugging, and reproducibility.</li>
+      </ul>
+      <pre><code>case PentagonIndex:
+    return "Pentagon";</code></pre>
+      <pre><code>case PentagonIndex:
+    return QString("Pentagon(radius=%1, points=%2, rotation=%3, xShift=%4, yShift=%5)")
+        .arg(pentagonRadiusSpin-&gt;value(), 0, 'f', 2)
+        .arg(pentagonPointsSpin-&gt;value())
+        .arg(pentagonRotationSpin-&gt;value(), 0, 'f', 2)
+        .arg(pentagonXShiftSpin-&gt;value(), 0, 'f', 2)
+        .arg(pentagonYShiftSpin-&gt;value(), 0, 'f', 2);</code></pre>
+    </div>
+
+    <h3>3. Add The New Preset Type In <code>patterngenerator.h</code></h3>
+    <div class="card">
+      <p>The generator backend is defined by <code>PatternGenerator::Preset</code> and <code>PatternGenerator::PatternRequest</code>.</p>
+      <pre><code>enum class Preset {
+    Circle,
+    Triangle,
+    Square,
+    Rectangle,
+    Hexagon,
+    TwoSpots,
+    Star,
+    PlanetAndMoon,
+    Grid,
+    Pentagon
+};</code></pre>
+      <p>Only add new <code>PatternRequest</code> fields if your new pattern actually needs parameters that are not already covered by fields such as <code>radius</code>, <code>pointCount</code>, <code>rotationDeg</code>, <code>xShift</code>, and <code>yShift</code>.</p>
+    </div>
+
+    <h3>4. Implement The Geometry In <code>patterngenerator.cpp</code></h3>
+    <div class="card">
+      <p>Add a new branch in <code>PatternGenerator::generate(const PatternRequest &amp;request)</code>.</p>
+      <p>For polygon-like shapes, you can usually reuse:</p>
+      <ul>
+        <li><code>makeRegularPolygon(...)</code></li>
+        <li><code>samplePolygonEdges(...)</code></li>
+        <li><code>applyShift(...)</code></li>
+      </ul>
+      <pre><code>case Preset::Pentagon: {
+    const QVector&lt;QPointF&gt; vertices = makeRegularPolygon(5, request.radius, request.rotationDeg);
+    points = samplePolygonEdges(vertices, count);
+    return applyShift(points, shiftX, shiftY);
+}</code></pre>
+    </div>
+
+    <h3>Optional But Recommended Updates</h3>
+    <div class="card">
+      <p><strong>Update <code>updateLimits()</code>:</strong> if the new controls should respect camera dimensions, add them to the same validation/range-limiting system used by the existing presets.</p>
+      <p><strong>Add better defaults:</strong> set sensible starting values so users can click <code>Generate</code> immediately.</p>
+    </div>
+
+    <h3>Worked Example: Add A Pentagon Preset</h3>
+    <div class="card">
+      <ol>
+        <li>Add <code>PentagonIndex</code> in <code>PatternPresetsWidget::PresetIndex</code></li>
+        <li>Add <code>"Pentagon"</code> to the preset combo box</li>
+        <li>Add <code>createPentagonPage()</code> to the stacked widget</li>
+        <li>Add radius/points/rotation/shift controls</li>
+        <li>Add <code>PatternGenerator::Preset::Pentagon</code></li>
+        <li>Handle <code>PentagonIndex</code> in <code>onGenerateClicked()</code></li>
+        <li>Handle <code>Preset::Pentagon</code> in <code>PatternGenerator::generate()</code></li>
+        <li>Add <code>presetName()</code> and <code>presetDetails()</code> support</li>
+        <li>Optionally add <code>updateLimits()</code> handling for the new controls</li>
+      </ol>
+      <p>Because the existing generator already has <code>makeRegularPolygon(...)</code>, the implementation can stay small and clean.</p>
+    </div>
+
+    <h2>Adding A New Hologram Generator Pattern Type</h2>
+
+    <h3>Where This UI Lives</h3>
+    <div class="card">
+      <p>The standard phase-mask generator dialog is implemented in:</p>
+      <ul>
+        <li><code>src/ui/hologramdialog.h</code></li>
+        <li><code>src/ui/hologramdialog.cpp</code></li>
+      </ul>
+      <p>The main window opens it generically in <code>src/ui/mainwindow.cpp</code>, so you usually do not need to change that file when adding a new hologram pattern type.</p>
+    </div>
+
+    <h3>Current Implementation Model</h3>
+    <div class="card">
+      <ul>
+        <li><code>patternTypeCombo-&gt;currentIndex()</code> selects the current pattern type.</li>
+        <li><code>generatePattern()</code> iterates over every pixel of the SLM image.</li>
+        <li>Each branch computes a phase value or grayscale output for that pixel.</li>
+        <li><code>updateParameterVisibility()</code> decides which controls are shown for the selected pattern.</li>
+      </ul>
+      <p>This means the combo-box item order, the generation branch order, and the visibility logic must stay synchronized.</p>
+    </div>
+
+    <h3>Required Files</h3>
+    <div class="card">
+      <ul>
+        <li><code>src/ui/hologramdialog.h</code></li>
+        <li><code>src/ui/hologramdialog.cpp</code></li>
+      </ul>
+    </div>
+
+    <h3>1. Add New Parameter Widgets In <code>hologramdialog.h</code></h3>
+    <div class="card">
+      <p>If your pattern needs extra user-configurable parameters, add widget members here.</p>
+      <pre><code>QDoubleSpinBox *radialFrequencySpin;
+QDoubleSpinBox *phaseOffsetSpin;</code></pre>
+      <p>If your pattern can reuse existing controls such as <code>periodSpin</code>, <code>angleSpin</code>, or <code>amplitudeSpin</code>, then no header change is needed.</p>
+    </div>
+
+    <h3>2. Register The New Pattern In <code>hologramdialog.cpp</code></h3>
+
+    <h4>A. Add The Name To <code>patternTypeCombo</code></h4>
+    <pre><code>patternTypeCombo-&gt;addItems({
+    "Blazed Grating (Prism)",
+    "Binary Grating",
+    "Fresnel Lens",
+    "Axicon",
+    "Vortex Beam",
+    "Sinusoidal Grating",
+    "Checkerboard",
+    "Radial Sine"
+});</code></pre>
+
+    <h4>B. Create And Configure New Controls</h4>
+    <pre><code>radialFrequencySpin = new ArrowDoubleSpinBox();
+radialFrequencySpin-&gt;setRange(0.01, 10.0);
+radialFrequencySpin-&gt;setValue(0.15);</code></pre>
+    <pre><code>form-&gt;addRow("Radial Frequency:", radialFrequencySpin);</code></pre>
+
+    <h4>C. Add The Generation Branch In <code>generatePattern()</code></h4>
+    <pre><code>else if (type == 7) {
+    const double radialFrequency = radialFrequencySpin-&gt;value();
+    const double amplitude = amplitudeSpin-&gt;value();
+    const double r = std::sqrt(cx * cx + cy * cy);
+
+    double phi = M_PI + amplitude * M_PI * std::sin(radialFrequency * r);
+    phi = std::fmod(phi, 2.0 * M_PI);
+    if (phi &lt; 0.0) phi += 2.0 * M_PI;
+    row[x] = static_cast&lt;uchar&gt;((phi / (2.0 * M_PI)) * 255.0);
+}</code></pre>
+    <p>The existing code already shows the expected pattern: compute coordinates, compute the phase expression, wrap to <code>[0, 2pi)</code>, and map phase to <code>0..255</code>.</p>
+
+    <h4>D. Update <code>updateParameterVisibility()</code></h4>
+    <pre><code>case 7: // Radial Sine
+    amplitudeSpin-&gt;setVisible(true);
+    radialFrequencySpin-&gt;setVisible(true);
+    break;</code></pre>
+    <p>If you forget this step, the pattern may work internally but the UI controls will remain hidden or unrelated controls may stay visible.</p>
+
+    <h3>Worked Example: Add A Radial Sine Pattern</h3>
+    <div class="card">
+      <ol>
+        <li>Add <code>"Radial Sine"</code> to <code>patternTypeCombo</code></li>
+        <li>Add <code>radialFrequencySpin</code> in <code>hologramdialog.h</code></li>
+        <li>Instantiate and configure <code>radialFrequencySpin</code> in the constructor</li>
+        <li>Add the control to the <code>QFormLayout</code></li>
+        <li>Add a new <code>type == 7</code> branch in <code>generatePattern()</code></li>
+        <li>Use existing centered coordinates <code>cx</code> and <code>cy</code></li>
+        <li>Compute radius with <code>std::sqrt(cx * cx + cy * cy)</code></li>
+        <li>Convert the sine-based phase into wrapped grayscale output</li>
+        <li>Update <code>updateParameterVisibility()</code> so only relevant controls appear</li>
+      </ol>
+    </div>
+
+    <h3>Common Pixel-Generation Pattern</h3>
+    <pre><code>double phi = /* your formula */;
+phi = std::fmod(phi, 2.0 * M_PI);
+if (phi &lt; 0.0) phi += 2.0 * M_PI;
+row[x] = static_cast&lt;uchar&gt;((phi / (2.0 * M_PI)) * 255.0);</code></pre>
+    <p>If your pattern is binary rather than continuous, you can directly assign <code>0</code>, <code>128</code>, or <code>255</code> style values instead.</p>
+
+    <h2>Common Mistakes</h2>
+    <div class="grid">
+      <div class="chip">
+        <strong>Target-grid pattern mistakes</strong>
+        <ul>
+          <li>Adding a preset name to the combo box but forgetting to add the page to <code>optionsStack</code></li>
+          <li>Adding a page to <code>optionsStack</code> but forgetting to add the matching enum index</li>
+          <li>Adding controls in the UI but not reading them in <code>onGenerateClicked()</code></li>
+          <li>Adding new fields to the UI but not adding them to <code>PatternRequest</code></li>
+          <li>Adding a new preset enum value but not handling it in <code>PatternGenerator::generate()</code></li>
+          <li>Forgetting to update <code>presetName()</code> and <code>presetDetails()</code></li>
+        </ul>
+      </div>
+      <div class="chip">
+        <strong>Hologram generator mistakes</strong>
+        <ul>
+          <li>Adding a new combo-box item but not adding a matching branch in <code>generatePattern()</code></li>
+          <li>Using the wrong <code>type</code> index after inserting a new pattern in the middle of the list</li>
+          <li>Adding new controls but forgetting to add them to the form layout</li>
+          <li>Adding form controls but forgetting to show them in <code>updateParameterVisibility()</code></li>
+          <li>Showing controls in <code>updateParameterVisibility()</code> but forgetting to actually read them in the generation branch</li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Quick Checklist</h2>
+    <div class="grid">
+      <div class="chip">
+        <strong>New Target-Grid Pattern</strong>
+        <ul>
+          <li>Add enum value to <code>PatternPresetsWidget::PresetIndex</code></li>
+          <li>Add UI widget members in <code>patternpresetswidget.h</code></li>
+          <li>Add combo-box item</li>
+          <li>Add stacked-widget page</li>
+          <li>Implement <code>create...Page()</code></li>
+          <li>Read parameters in <code>onGenerateClicked()</code></li>
+          <li>Add <code>PatternGenerator::Preset</code> enum value</li>
+          <li>Add <code>PatternRequest</code> fields if needed</li>
+          <li>Add <code>generate()</code> branch</li>
+          <li>Update <code>presetName()</code></li>
+          <li>Update <code>presetDetails()</code></li>
+          <li>Optionally update <code>updateLimits()</code></li>
+        </ul>
+      </div>
+      <div class="chip">
+        <strong>New Hologram Pattern Type</strong>
+        <ul>
+          <li>Add combo-box label</li>
+          <li>Add widget members in <code>hologramdialog.h</code> if needed</li>
+          <li>Instantiate/configure controls</li>
+          <li>Add controls to the form</li>
+          <li>Add generation branch in <code>generatePattern()</code></li>
+          <li>Add parameter visibility logic in <code>updateParameterVisibility()</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <h2>Interfaces To Know</h2>
+    <div class="card">
+      <ul>
+        <li><code>PatternGenerator::Preset</code></li>
+        <li><code>PatternGenerator::PatternRequest</code></li>
+        <li><code>PatternPresetsWidget::PresetIndex</code></li>
+        <li><code>HologramDialog</code> constructor-built parameter widgets</li>
+        <li><code>HologramDialog::generatePattern()</code></li>
+        <li><code>HologramDialog::updateParameterVisibility()</code></li>
+      </ul>
+    </div>
+
+    <h2>Final Notes</h2>
+    <div class="card">
+      <ul>
+        <li>Use the target-grid preset system when the output is a list of trap coordinates.</li>
+        <li>Use the hologram dialog pattern system when the output is a full grayscale phase image.</li>
+        <li>Try to reuse existing helper functions and parameter patterns before introducing brand-new structures.</li>
+        <li>Keep UI order and switch-case order synchronized whenever selection depends on integer indices.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
