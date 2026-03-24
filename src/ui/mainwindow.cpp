@@ -238,8 +238,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         cameraBackend = 0;
     }
 
+    camWidth = settings.value("Hardware/Cam_Width", 1920).toInt();
     camHeight = settings.value("Hardware/Cam_Height", 1080).toInt();
     camPixelSize = settings.value("Hardware/Cam_PixelSize", 5.0).toDouble();
+    saveCompressed = settings.value("Hardware/save_compressed", false).toBool();
     flipCameraX = settings.value("Hardware/Camera_FlipX", false).toBool();
     flipCameraY = settings.value("Hardware/Camera_FlipY", false).toBool();
     saveFollowsTransforms = settings.value("Camera/save_follows_transforms", false).toBool();
@@ -756,6 +758,14 @@ void MainWindow::createControls(QGridLayout *layout) {
     recordTimeLabel = new QLabel("00:00");
     recordTimeLabel->setStyleSheet("color: #ff4444; font-weight: bold; font-family: monospace;");
     recordTimeLabel->setVisible(false);
+    recordTimeHideTimer = new QTimer(this);
+    recordTimeHideTimer->setSingleShot(true);
+    recordTimeHideTimer->setInterval(2000);
+    connect(recordTimeHideTimer, &QTimer::timeout, this, [this]() {
+        if (recordTimeLabel && recordVideoBtn && !recordVideoBtn->isChecked()) {
+            recordTimeLabel->setVisible(false);
+        }
+    });
     captureLayout->addWidget(captureImageBtn);
     captureLayout->addWidget(recordVideoBtn);
     captureLayout->addWidget(recordTimeLabel);
@@ -853,6 +863,17 @@ void MainWindow::setupConnections() {
     connect(camStopBtn, &QPushButton::clicked, camManager, &CameraManager::stopCamera);
     connect(captureImageBtn, &QPushButton::clicked, camManager, &CameraManager::captureImage);
     connect(recordVideoBtn, &QPushButton::toggled, camManager, &CameraManager::toggleRecording);
+    connect(recordVideoBtn, &QPushButton::toggled, this, [this](bool checked) {
+        if (!recordTimeHideTimer || !recordTimeLabel) {
+            return;
+        }
+        if (checked) {
+            recordTimeHideTimer->stop();
+            recordTimeLabel->setVisible(true);
+        } else {
+            recordTimeHideTimer->start();
+        }
+    });
     
     connect(camManager, &CameraManager::frameReady, this, &MainWindow::updateCameraFeed);
     connect(camManager, &CameraManager::statusMessage, this, [this](const QString &msg){
@@ -928,13 +949,23 @@ void MainWindow::setupConnections() {
 // ==========================================
 
 void MainWindow::openSettingsDialog() {
+    int currentCameraRotation = cameraViewRotationDegrees;
+    bool currentFlipX = flipCameraX;
+    bool currentFlipY = flipCameraY;
+
+    QSettings hwSettings(QCoreApplication::applicationDirPath() + "/hardware_config.ini", QSettings::IniFormat);
+    currentCameraRotation = hwSettings.value("Hardware/Camera_ViewRotation", currentCameraRotation).toInt();
+    currentFlipX = hwSettings.value("Hardware/Camera_FlipX", currentFlipX).toBool();
+    currentFlipY = hwSettings.value("Hardware/Camera_FlipY", currentFlipY).toBool();
+
     SettingsDialog dialog(slmWidth, slmHeight, slmPixelSize, cameraBackend,
                           camWidth, camHeight, camPixelSize,
                           udpBindIp, udpPort,
                           laserWavelength, fourierFocalLength, slmOutputMode, autoRunGsEnabled, autoSendSlmEnabled,
-                          gsStartingPhaseMaskMode, gsComputeBackendMode, openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex, this);
+                          gsStartingPhaseMaskMode, gsComputeBackendMode, openClPlatformIndex, openClDeviceIndex, cudaDeviceIndex,
+                          currentCameraRotation, currentFlipX, saveCompressed, saveFollowsTransforms, currentFlipY, this);
 
-    if (dialog.exec() == QDialog::Accepted) {
+    auto applyFn = [&]() {
         const int prevSlmWidth = slmWidth;
         const int prevSlmHeight = slmHeight;
 
@@ -985,6 +1016,25 @@ void MainWindow::openSettingsDialog() {
         settings.setValue("Hardware/GS_OpenCLDeviceIndex", openClDeviceIndex);
         settings.setValue("Hardware/GS_CUDADeviceIndex", cudaDeviceIndex);
         settings.sync();
+
+        // Save UI settings to hardware_config.ini
+        cameraViewRotationDegrees = dialog.getCameraRotation();
+        flipCameraX = dialog.getFlipX();
+        flipCameraY = dialog.getFlipY();
+        saveCompressed = dialog.getSaveCompressed();
+        saveFollowsTransforms = dialog.getSaveFollowsTransforms();
+
+        hwSettings.setValue("Hardware/Camera_ViewRotation", cameraViewRotationDegrees);
+        hwSettings.setValue("Hardware/Camera_FlipX", flipCameraX);
+        hwSettings.setValue("Hardware/Camera_FlipY", flipCameraY);
+        hwSettings.setValue("Hardware/save_compressed", saveCompressed);
+        hwSettings.setValue("Camera/save_follows_transforms", saveFollowsTransforms);
+        hwSettings.sync();
+
+        if (!lastCameraFrame.isNull()) {
+            // Apply transformations immediately using the cached unflipped/unrotated frame
+            updateCameraFeed(lastCameraFrame);
+        }
 
         if (!autoRunGsEnabled && gsAutoRunTimer) {
             gsAutoRunTimer->stop();
@@ -1052,8 +1102,14 @@ void MainWindow::openSettingsDialog() {
             QMessageBox::information(this, "Restart Required",
                 "You have changed the Camera Engine. Please restart the application for this to take effect.");
         } else {
-            statusBar()->showMessage("Settings saved to: " + configPath(), 5000);
+            statusBar()->showMessage("Settings applied and saved to: " + configPath(), 5000);
         }
+    };
+
+    connect(&dialog, &SettingsDialog::applyRequested, this, applyFn);
+
+    if (dialog.exec() == QDialog::Accepted) {
+        applyFn();
     }
 }
 
@@ -1598,10 +1654,11 @@ void MainWindow::onTabChanged(int index) {
 }
 
 void MainWindow::onRecordingTimeUpdated(const QString &timeString) {
-    if (timeString == "00:00" && recordVideoBtn->isChecked()) {
+    if (recordVideoBtn->isChecked()) {
+        if (recordTimeHideTimer) {
+            recordTimeHideTimer->stop();
+        }
         recordTimeLabel->setVisible(true);
-    } else if (!recordVideoBtn->isChecked()) {
-        recordTimeLabel->setVisible(false);
     }
     recordTimeLabel->setText(timeString);
 }
@@ -2537,7 +2594,17 @@ QMainWindow, QWidget {
 QGroupBox {
     border: 1px solid #555;
     border-radius: 4px;
-    margin-top: 1ex;
+    margin-top: 12px;
+    padding-top: 6px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 4px;
+    background-color: #2b2b2b;
+    color: #e0e0e0;
+    font-weight: bold;
 }
 QPushButton, QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {
     background-color: #3c3f41;

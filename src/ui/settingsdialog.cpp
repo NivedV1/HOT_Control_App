@@ -8,12 +8,14 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QStandardItemModel>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QScreen>
 #include <QGuiApplication>
 #include <QtGlobal>
+#include <QTabWidget>
 
 SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                int camW, int camH, double camPix,
@@ -26,6 +28,8 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
                                int openClPlatformIndex,
                                int openClDeviceIndex,
                                int cudaDeviceIndex,
+                               int cameraRotation, bool flipX, bool saveCompressed,
+                               bool saveFollowsTransforms, bool flipY,
                                QWidget *parent)
     : QDialog(parent) {
 
@@ -44,6 +48,14 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(12, 12, 12, 12);
     mainLayout->setSpacing(8);
+
+    QTabWidget *tabWidget = new QTabWidget(this);
+    
+    // --- HARDWARE TAB ---
+    QWidget *hardwareTab = new QWidget();
+    QVBoxLayout *hardwareLayout = new QVBoxLayout(hardwareTab);
+    hardwareLayout->setContentsMargins(12, 12, 12, 12);
+    hardwareLayout->setSpacing(8);
 
     // --- 1. SLM SETTINGS ---
     QGroupBox *slmGroup = new QGroupBox("SLM Parameters");
@@ -200,9 +212,6 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     camForm->addRow("Camera Width (px):", camWidthSpin);
     camForm->addRow("Camera Height (px):", camHeightSpin);
     camForm->addRow("Camera Pixel Size:", camPixelSpin);
-    camForm->addRow(new QLabel("<b>UDP Stream Settings</b>", this));
-    camForm->addRow("UDP Bind IP:", udpBindIpEdit);
-    camForm->addRow("UDP Port:", udpPortSpin);
     camGroup->setLayout(camForm);
 
     // --- 3. OPTICAL SETUP ---
@@ -222,18 +231,76 @@ SettingsDialog::SettingsDialog(int slmW, int slmH, double slmPix, int backend,
     QLabel *monitorHint = new QLabel("Monitor target is selected from Tools > Select Monitor.");
     monitorHint->setWordWrap(true);
 
-    // Assemble the dialog
-    mainLayout->addWidget(slmGroup);
-    mainLayout->addWidget(camGroup);
-    mainLayout->addWidget(opticsGroup);
-    mainLayout->addWidget(monitorHint);
+    // Assemble the hardware tab
+    hardwareLayout->addWidget(slmGroup);
+    hardwareLayout->addWidget(camGroup);
+    hardwareLayout->addWidget(opticsGroup);
+    hardwareLayout->addWidget(monitorHint);
+    hardwareLayout->addStretch();
 
-    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, Qt::Horizontal, this);
+    // --- UI SETTINGS TAB ---
+    QWidget *uiTab = new QWidget();
+    QFormLayout *uiLayout = new QFormLayout(uiTab);
+    uiLayout->setContentsMargins(12, 12, 12, 12);
+    uiLayout->setSpacing(8);
+
+    cameraRotationCombo = new QComboBox(this);
+    cameraRotationCombo->addItems({"0", "90", "180", "270"});
+    int rotIndex = 0;
+    if (cameraRotation == 90) rotIndex = 1;
+    else if (cameraRotation == 180) rotIndex = 2;
+    else if (cameraRotation == 270) rotIndex = 3;
+    cameraRotationCombo->setCurrentIndex(rotIndex);
+
+    flipXCheck = new QCheckBox(this);
+    flipXCheck->setChecked(flipX);
+
+    flipYCheck = new QCheckBox(this);
+    flipYCheck->setChecked(flipY);
+
+    saveCompressedCheck = new QCheckBox(this);
+    saveCompressedCheck->setChecked(saveCompressed);
+
+    saveFollowsTransformsCheck = new QCheckBox(this);
+    saveFollowsTransformsCheck->setChecked(saveFollowsTransforms);
+
+    QLabel *udpHeader = new QLabel("<b>UDP Stream Settings</b>", this);
+    QLabel *captureHeader = new QLabel("<b>Capture Save Settings</b>", this);
+
+    uiLayout->addRow(udpHeader);
+    uiLayout->addRow("UDP Bind IP:", udpBindIpEdit);
+    uiLayout->addRow("UDP Port:", udpPortSpin);
+    uiLayout->addRow(captureHeader);
+    uiLayout->addRow("Camera Rotation (deg):", cameraRotationCombo);
+    uiLayout->addRow("Flip Camera X:", flipXCheck);
+    uiLayout->addRow("Flip Camera Y:", flipYCheck);
+    uiLayout->addRow("Save Compressed:", saveCompressedCheck);
+    uiLayout->addRow("Save Using Rotation/Flip:", saveFollowsTransformsCheck);
+
+    // Add Tabs
+    tabWidget->addTab(hardwareTab, "Hardware");
+    tabWidget->addTab(uiTab, "UI Settings");
+
+    mainLayout->addWidget(tabWidget);
+
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Apply | QDialogButtonBox::Cancel, Qt::Horizontal, this);
     mainLayout->addWidget(buttonBox);
+
+    QPushButton *applyBtn = buttonBox->button(QDialogButtonBox::Apply);
+    if (applyBtn) {
+        connect(applyBtn, &QPushButton::clicked, this, &SettingsDialog::applyRequested);
+    }
 
     connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 }
+
+// UI Settings Getters
+int SettingsDialog::getCameraRotation() const { return cameraRotationCombo->currentText().toInt(); }
+bool SettingsDialog::getFlipX() const { return flipXCheck->isChecked(); }
+bool SettingsDialog::getFlipY() const { return flipYCheck->isChecked(); }
+bool SettingsDialog::getSaveCompressed() const { return saveCompressedCheck->isChecked(); }
+bool SettingsDialog::getSaveFollowsTransforms() const { return saveFollowsTransformsCheck->isChecked(); }
 
 // SLM Getters
 int SettingsDialog::getWidth() const { return widthSpin->value(); }

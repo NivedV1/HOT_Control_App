@@ -62,6 +62,8 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     amplitudeSpin->setValue(0.5);
     amplitudeSpin->setSingleStep(0.1);
     
+    invertPhaseCheck = new QCheckBox("Invert Phase");
+    
     form->addRow("Pattern Type:", patternTypeCombo);
     form->addRow("Grating Period:", periodSpin);
     form->addRow("Rotation Angle:", angleSpin);
@@ -69,6 +71,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     form->addRow("Radial Period:", radialPeriodSpin);
     form->addRow("Topological Charge:", topologicalChargeSpin);
     form->addRow("Amplitude:", amplitudeSpin);
+    form->addRow(invertPhaseCheck);
     settingsGroup->setLayout(form);
     
     // Initially hide parameters not relevant to default pattern
@@ -141,6 +144,7 @@ void HologramDialog::generatePattern() {
     int type = patternTypeCombo->currentIndex();
     double period = periodSpin->value();
     double angleRad = angleSpin->value() * M_PI / 180.0;
+    bool invertPhase = invertPhaseCheck->isChecked();
     
     double cosA = std::cos(angleRad);
     double sinA = std::sin(angleRad);
@@ -183,6 +187,7 @@ void HologramDialog::generatePattern() {
                 // Centered quadratic phase: phi = (pi / f) * (cx^2 + cy^2)
                 const double f = focalLengthSpin->value();
                 double phi = (M_PI / f) * (cx * cx + cy * cy);
+                if (invertPhase) phi = -phi;
                 phi = std::fmod(phi, 2.0 * M_PI);
                 if (phi < 0.0) phi += 2.0 * M_PI;
                 row[x] = static_cast<uchar>((phi / (2.0 * M_PI)) * 255.0);
@@ -192,6 +197,7 @@ void HologramDialog::generatePattern() {
                 const double radialPeriod = radialPeriodSpin->value();
                 double r = std::sqrt(cx * cx + cy * cy);
                 double phi = 2.0 * M_PI * (r / radialPeriod);
+                if (invertPhase) phi = -phi;
                 phi = std::fmod(phi, 2.0 * M_PI);
                 if (phi < 0.0) phi += 2.0 * M_PI;
                 row[x] = static_cast<uchar>((phi / (2.0 * M_PI)) * 255.0);
@@ -276,6 +282,7 @@ void HologramDialog::updateParameterVisibility() {
     radialPeriodSpin->setVisible(false);
     topologicalChargeSpin->setVisible(false);
     amplitudeSpin->setVisible(false);
+    invertPhaseCheck->setVisible(false);
     
     // Show relevant parameters based on pattern type
     switch (patternType) {
@@ -286,9 +293,11 @@ void HologramDialog::updateParameterVisibility() {
             break;
         case 2: // Fresnel Lens
             focalLengthSpin->setVisible(true);
+            invertPhaseCheck->setVisible(true);
             break;
         case 3: // Axicon
             radialPeriodSpin->setVisible(true);
+            invertPhaseCheck->setVisible(true);
             break;
         case 4: // Vortex Beam
             topologicalChargeSpin->setVisible(true);

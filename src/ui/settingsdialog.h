@@ -22,8 +22,13 @@ public:
                    int startingPhaseMaskMode,
                    int gsComputeBackendMode,
                    int openClPlatformIndex,
-                    int openClDeviceIndex,
+                   int openClDeviceIndex,
                    int cudaDeviceIndex,
+                   int cameraRotation,
+                   bool flipX,
+                   bool saveCompressed,
+                   bool saveFollowsTransforms,
+                   bool flipY,
                    QWidget *parent = nullptr);
 
     // SLM Getters
@@ -38,6 +43,13 @@ public:
     double getCamPixelSize() const;
     QString getUdpBindIp() const;
     int getUdpPort() const;
+    
+    // UI Settings Getters
+    int getCameraRotation() const;
+    bool getFlipX() const;
+    bool getFlipY() const;
+    bool getSaveCompressed() const;
+    bool getSaveFollowsTransforms() const;
 
     // Optical Getters
     double getWavelength() const;
@@ -54,6 +66,9 @@ public:
     int getOpenClPlatformIndex() const;
     int getOpenClDeviceIndex() const;
     int getCudaDeviceIndex() const;
+
+signals:
+    void applyRequested();
 
 private:
     // SLM
@@ -75,6 +90,13 @@ private:
     QDoubleSpinBox *camPixelSpin;
     QLineEdit *udpBindIpEdit;
     QSpinBox *udpPortSpin;
+
+    // UI Settings
+    QComboBox *cameraRotationCombo;
+    QCheckBox *flipXCheck;
+    QCheckBox *flipYCheck;
+    QCheckBox *saveCompressedCheck;
+    QCheckBox *saveFollowsTransformsCheck;
 
     // Optics
     QDoubleSpinBox *waveSpin;

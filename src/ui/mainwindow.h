@@ -252,6 +252,7 @@ private:
     QPushButton *captureImageBtn;
     QPushButton *recordVideoBtn;
     QLabel *recordTimeLabel;
+    QTimer *recordTimeHideTimer = nullptr;
 
     // Backend Managers
     CameraManager *camManager;
@@ -267,6 +268,7 @@ private:
     int cameraViewRotationDegrees = 0;
     bool flipCameraX = false;
     bool flipCameraY = false;
+    bool saveCompressed = false;
     bool saveFollowsTransforms = false;
     QString udpBindIp = "0.0.0.0";
     int udpPort = 9000;

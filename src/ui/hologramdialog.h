@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QCheckBox>
 #include <QImage>
 
 class HologramDialog : public QDialog {
@@ -38,6 +39,7 @@ private:
     QDoubleSpinBox *radialPeriodSpin;
     QSpinBox *topologicalChargeSpin;
     QDoubleSpinBox *amplitudeSpin;
+    QCheckBox *invertPhaseCheck;
     
     QLabel *phasePreview;
     QPushButton *generateBtn;
