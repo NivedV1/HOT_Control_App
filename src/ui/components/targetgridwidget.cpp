@@ -49,7 +49,13 @@ void GridPoint::paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
     // Draw point ID text
     if (selected) {
         painter->setPen(QPen(QColor(0, 255, 0)));
-        painter->drawText(-10, POINT_RADIUS + 12, 20, 16, Qt::AlignCenter, QString::number(pointId));
+        painter->save();
+        // The view uses a flipped Y axis; counter-flip so label text is upright.
+        painter->scale(1.0, -1.0);
+        painter->drawText(QRectF(-10.0, -(POINT_RADIUS + 28.0), 20.0, 16.0),
+                          Qt::AlignCenter,
+                          QString::number(pointId));
+        painter->restore();
     }
 }
 
@@ -164,6 +170,24 @@ void TargetGridWidget::clearAllPoints() {
     selectedPoint = nullptr;
     pointDragActive = false;
     nextPointId = 1;
+}
+
+bool TargetGridWidget::setPointCoordinates(int pointId, const QPointF &pixelCoords) {
+    const double halfWidth = cameraWidth / 2.0;
+    const double halfHeight = cameraHeight / 2.0;
+    QPointF clamped = pixelCoords;
+    clamped.setX(qBound(-halfWidth, clamped.x(), halfWidth));
+    clamped.setY(qBound(-halfHeight, clamped.y(), halfHeight));
+
+    for (GridPoint *point : gridPoints) {
+        if (point && point->getPointId() == pointId) {
+            point->setPixelCoordinates(clamped);
+            point->setPos(clamped);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 QVector<QPair<int, QPointF>> TargetGridWidget::getAllPoints() const {

@@ -47,6 +47,7 @@ public:
     void addPoint(QPointF pixelCoords);
     void removePoint(int pointId);
     void clearAllPoints();
+    bool setPointCoordinates(int pointId, const QPointF &pixelCoords);
     
     // Get all points
     QVector<QPair<int, QPointF>> getAllPoints() const;

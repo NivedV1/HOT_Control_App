@@ -141,6 +141,7 @@ set(SOURCES
     src/core/trap_manager.cpp
     src/ui/hologramdialog.cpp
     src/core/algorithms/gs_algorithm.cpp
+    src/core/algorithms/rme_algorithm.cpp
     src/hardware/slm_controller.cpp
     src/hardware/camera_stream.cpp
     src/ui/components/targetgridwidget.cpp
@@ -177,6 +178,7 @@ set(HEADERS
     src/core/algorithms/phase_algorithm.h
     src/core/algorithms/gs_algorithm.h
     src/core/algorithms/gs_algorithm_cuda.h
+    src/core/algorithms/rme_algorithm.h
     src/core/algorithms/wgs_algorithm.h
     src/hardware/slm_controller.h
     src/hardware/camera_stream.h

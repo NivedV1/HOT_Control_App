@@ -10,6 +10,7 @@
 #include "../core/patterngenerator.h"
 #include "../core/python_trap_script_engine.h"
 #include "../core/algorithms/gs_algorithm.h"
+#include "../core/algorithms/rme_algorithm.h"
 #include "../camera/cameramanager.h"
 
 #include <QVBoxLayout>
@@ -51,17 +52,22 @@
 #include <QTimer>
 #include <QStyle>
 #include <QFontDatabase>
+#include <QSignalBlocker>
 
 namespace {
 constexpr int kImageTabIndex = 2;
 constexpr int kPythonTabIndex = 5;
 constexpr int kDefaultMonitorNumber = 2;
+constexpr int kDefaultCameraPreviewMonitorNumber = 1;
 constexpr int kDefaultActiveWidth = 1272;
 constexpr int kDefaultActiveHeight = 1024;
 constexpr int kDefaultActiveOffsetX = 0;
 constexpr int kDefaultActiveOffsetY = 0;
 constexpr int kGsAutoRunDebounceMs = 180;
 constexpr double kFramePointEpsilon = 1e-6;
+constexpr int kAlgorithmGsIndex = 0;
+constexpr int kAlgorithmWeightedGsIndex = 1;
+constexpr int kAlgorithmRmeIndex = 2;
 
 QString hardwareConfigPath() {
     return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
@@ -262,6 +268,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     isDarkMode = settings.value("UI/DarkMode", true).toBool();
     slmOutputMode = settings.value("Hardware/SLM_OutputMode", DllOutputMode).toInt();
     selectedMonitorNumber = settings.value("Hardware/SLM_SelectedMonitor", kDefaultMonitorNumber).toInt();
+    cameraPreviewMonitorNumber = settings.value("Hardware/CameraPreview_SelectedMonitor",
+                                                kDefaultCameraPreviewMonitorNumber).toInt();
     slmActiveWidth = settings.value("Hardware/SLM_ActiveWidth", kDefaultActiveWidth).toInt();
     slmActiveHeight = settings.value("Hardware/SLM_ActiveHeight", kDefaultActiveHeight).toInt();
     slmActiveOffsetX = settings.value("Hardware/SLM_ActiveOffsetX", kDefaultActiveOffsetX).toInt();
@@ -284,6 +292,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     camManager = new CameraManager(cameraBackend, udpBindIp, static_cast<quint16>(udpPort), this);
     setupConnections();
+    refreshCameraPreviewMonitorOptions();
+
+    connect(qGuiApp, &QGuiApplication::screenAdded, this, [this](QScreen *) {
+        onScreenTopologyChanged();
+    });
+    connect(qGuiApp, &QGuiApplication::screenRemoved, this, [this](QScreen *) {
+        onScreenTopologyChanged();
+    });
 
     // Load SLM DLL safely
     slmLibrary.setFileName(QCoreApplication::applicationDirPath() + "/Image_Control.dll");
@@ -306,6 +322,13 @@ MainWindow::~MainWindow() {
         directOutputWindow->close();
         delete directOutputWindow;
         directOutputWindow = nullptr;
+    }
+
+    clearCameraPreviewOutput();
+    if (cameraPreviewWindow) {
+        cameraPreviewWindow->close();
+        delete cameraPreviewWindow;
+        cameraPreviewWindow = nullptr;
     }
 
     // Safety check: close SLM if app is closed
@@ -445,6 +468,16 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     QVBoxLayout *cameraColLayout = new QVBoxLayout(cameraColumn);
     cameraColLayout->setContentsMargins(0, 0, 0, 0);
     cameraColLayout->setSpacing(5);
+
+    QHBoxLayout *cameraPreviewRouteLayout = new QHBoxLayout();
+    cameraPreviewMonitorCombo = new QComboBox();
+    cameraPreviewMonitorCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    cameraPreviewMonitorCombo->setPlaceholderText("Select monitor");
+    cameraPreviewToggleBtn = new QPushButton("Show On Monitor");
+    cameraPreviewToggleBtn->setCheckable(true);
+    cameraPreviewRouteLayout->addWidget(cameraPreviewMonitorCombo, 1);
+    cameraPreviewRouteLayout->addWidget(cameraPreviewToggleBtn);
+    cameraColLayout->addLayout(cameraPreviewRouteLayout);
     
     cameraFeedLabel = new QLabel("Camera Feed (Offline)");
     cameraFeedLabel->setObjectName("cameraFeedLabel");
@@ -717,8 +750,9 @@ void MainWindow::createControls(QGridLayout *layout) {
     QFormLayout *algoForm = new QFormLayout();
 
     algorithmCombo = new QComboBox();
-    algorithmCombo->addItems({"Gerchberg-Saxton", "Weighted GS"});
+    algorithmCombo->addItems({"Gerchberg-Saxton", "Weighted GS", "Random Mask Encoding (Paper)"});
 
+    iterationsLabel = new QLabel("Iterations:");
     iterationsSpin = new ArrowSpinBox();
     iterationsSpin->setRange(1, 1000);
     iterationsSpin->setValue(20);
@@ -733,7 +767,7 @@ void MainWindow::createControls(QGridLayout *layout) {
     generateGsBtn = new QPushButton("Generate GS Mask");
 
     algoForm->addRow("Algorithm:", algorithmCombo);
-    algoForm->addRow("Iterations:", iterationsSpin);
+    algoForm->addRow(iterationsLabel, iterationsSpin);
     algoForm->addRow(relaxationLabel, relaxationSpin);
     algoForm->addRow(generateGsBtn);
     algoGroup->setLayout(algoForm);
@@ -842,6 +876,7 @@ void MainWindow::setupConnections() {
     connect(targetGridWidget, &TargetGridWidget::pointMoved, this, &MainWindow::onGridPointMoved);
     connect(targetGridWidget, &TargetGridWidget::pointRemoved, this, &MainWindow::onGridPointRemoved);
     connect(targetGridWidget, &TargetGridWidget::pointSelected, this, &MainWindow::onGridPointSelected);
+    connect(trapTable, &QTableWidget::itemChanged, this, &MainWindow::onTrapTableItemChanged);
     // Manual tab button connections
     connect(addPointsBtn, &QPushButton::clicked, this, [this]() {
         targetGridWidget->addPoint(QPointF(0, 0));
@@ -863,6 +898,7 @@ void MainWindow::setupConnections() {
     connect(camSelect, QOverload<int>::of(&QComboBox::currentIndexChanged), camManager, &CameraManager::changeCamera);
     connect(camStartBtn, &QPushButton::clicked, camManager, &CameraManager::startCamera);
     connect(camStopBtn, &QPushButton::clicked, camManager, &CameraManager::stopCamera);
+    connect(camStopBtn, &QPushButton::clicked, this, &MainWindow::handleCameraFeedStopped);
     connect(captureImageBtn, &QPushButton::clicked, camManager, &CameraManager::captureImage);
     connect(recordVideoBtn, &QPushButton::toggled, camManager, &CameraManager::toggleRecording);
     connect(recordVideoBtn, &QPushButton::toggled, this, [this](bool checked) {
@@ -876,8 +912,17 @@ void MainWindow::setupConnections() {
             recordTimeHideTimer->start();
         }
     });
-    
-    connect(camManager, &CameraManager::frameReady, this, &MainWindow::updateCameraFeed);
+
+    connect(cameraPreviewMonitorCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this,
+            &MainWindow::onCameraPreviewMonitorChanged);
+    connect(cameraPreviewToggleBtn, &QPushButton::toggled, this, &MainWindow::onCameraPreviewToggled);
+
+    connect(camManager, &CameraManager::frameReady, this, [this](const QImage &image) {
+        cameraFeedActive = true;
+        updateCameraFeed(image);
+    });
     connect(camManager, &CameraManager::statusMessage, this, [this](const QString &msg){
         statusBar()->showMessage(msg);
     });
@@ -1168,7 +1213,19 @@ void MainWindow::onSourceIntensityApplied(const QVector<float> &intensityMap,
 }
 
 bool MainWindow::isGerchbergSaxtonSelected() const {
-    return algorithmCombo && algorithmCombo->currentIndex() == 0;
+    return algorithmCombo && algorithmCombo->currentIndex() == kAlgorithmGsIndex;
+}
+
+bool MainWindow::isWeightedGsSelected() const {
+    return algorithmCombo && algorithmCombo->currentIndex() == kAlgorithmWeightedGsIndex;
+}
+
+bool MainWindow::isRandomMaskEncodingSelected() const {
+    return algorithmCombo && algorithmCombo->currentIndex() == kAlgorithmRmeIndex;
+}
+
+bool MainWindow::isAutoMaskGenerationAlgorithmSelected() const {
+    return isGerchbergSaxtonSelected() || isRandomMaskEncodingSelected();
 }
 
 QVector<float> MainWindow::defaultGsSourceAmplitude() const {
@@ -1178,16 +1235,31 @@ QVector<float> MainWindow::defaultGsSourceAmplitude() const {
 
 void MainWindow::updateAlgorithmSettingsUi() {
     const bool gsSelected = isGerchbergSaxtonSelected();
+    const bool wgsSelected = isWeightedGsSelected();
+    const bool rmeSelected = isRandomMaskEncodingSelected();
+
+    if (iterationsLabel) {
+        iterationsLabel->setVisible(!rmeSelected);
+    }
+    if (iterationsSpin) {
+        iterationsSpin->setVisible(!rmeSelected);
+    }
 
     if (relaxationLabel) {
-        relaxationLabel->setVisible(!gsSelected);
+        relaxationLabel->setVisible(wgsSelected);
     }
     if (relaxationSpin) {
-        relaxationSpin->setVisible(!gsSelected);
+        relaxationSpin->setVisible(wgsSelected);
     }
 
     if (generateGsBtn) {
-        generateGsBtn->setText(gsSelected ? "Generate GS Mask" : "Generate (WGS unavailable)");
+        if (gsSelected) {
+            generateGsBtn->setText("Generate GS Mask");
+        } else if (rmeSelected) {
+            generateGsBtn->setText("Generate RME Mask");
+        } else {
+            generateGsBtn->setText("Generate (WGS unavailable)");
+        }
     }
 }
 
@@ -1196,7 +1268,7 @@ void MainWindow::onAlgorithmSelectionChanged(int index) {
 
     updateAlgorithmSettingsUi();
 
-    if (!isGerchbergSaxtonSelected()) {
+    if (!isAutoMaskGenerationAlgorithmSelected()) {
         if (gsAutoRunTimer) {
             gsAutoRunTimer->stop();
         }
@@ -1211,7 +1283,7 @@ void MainWindow::onGenerateGsMaskClicked() {
 }
 
 void MainWindow::scheduleGsAutoRun() {
-    if (!autoRunGsEnabled || !isGerchbergSaxtonSelected() || !gsAutoRunTimer) {
+    if (!autoRunGsEnabled || !isAutoMaskGenerationAlgorithmSelected() || !gsAutoRunTimer) {
         return;
     }
     if (animationRealtimeRunning || animationPlaybackRunning) {
@@ -1238,7 +1310,7 @@ void MainWindow::autoSendToSlmIfEnabled() {
     sendToSLM();
 }
 void MainWindow::onGsAutoRunTimeout() {
-    if (!autoRunGsEnabled || !isGerchbergSaxtonSelected()) {
+    if (!autoRunGsEnabled || !isAutoMaskGenerationAlgorithmSelected()) {
         return;
     }
     if (animationRealtimeRunning || animationPlaybackRunning) {
@@ -1253,18 +1325,75 @@ void MainWindow::onGsAutoRunTimeout() {
 }
 
 bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) {
-    if (!isGerchbergSaxtonSelected()) {
+    if (isWeightedGsSelected()) {
         if (showWarnings) {
             QMessageBox::information(this, "Weighted GS", "Weighted GS is not implemented yet.");
         }
         return false;
     }
 
-    if (gridPointData.isEmpty()) {
+    if (!isGerchbergSaxtonSelected() && !isRandomMaskEncodingSelected()) {
         if (showWarnings) {
-            QMessageBox::warning(this, "GS Algorithm", "No target points found. Add points to the target grid.");
+            QMessageBox::warning(this, "Algorithm", "Selected algorithm is not supported.");
         }
         return false;
+    }
+
+    if (gridPointData.isEmpty()) {
+        if (showWarnings) {
+            const QString title = isRandomMaskEncodingSelected() ? "RME Algorithm" : "GS Algorithm";
+            QMessageBox::warning(this, title, "No target points found. Add points to the target grid.");
+        }
+        return false;
+    }
+
+    if (isRandomMaskEncodingSelected()) {
+        QVector<RMEAlgorithm::RMETargetPoint> targets;
+        targets.reserve(gridPointData.size());
+        for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
+            RMEAlgorithm::RMETargetPoint target;
+            target.xCamPx = it.value().x();
+            target.yCamPx = it.value().y();
+            targets.append(target);
+        }
+
+        RMEAlgorithm::RMEConfig config;
+        config.slmWidth = slmWidth;
+        config.slmHeight = slmHeight;
+        config.slmPixelSizeUm = slmPixelSize;
+        config.camWidth = camWidth;
+        config.camHeight = camHeight;
+        config.camPixelSizeUm = camPixelSize;
+        config.cameraImagingMagnification = cameraImagingMagnification;
+        config.wavelengthNm = laserWavelength;
+        config.focalLengthMm = fourierFocalLength;
+
+        const RMEAlgorithm::RMEResult result = RMEAlgorithm::runRandomMaskEncoding(config, targets);
+        if (!result.success) {
+            if (showWarnings) {
+                QMessageBox::warning(this, "RME Algorithm", result.error);
+            }
+            return false;
+        }
+
+        currentMask = result.phaseMask8Bit.convertToFormat(QImage::Format_Grayscale8);
+        if (currentMask.size() != QSize(slmWidth, slmHeight)) {
+            currentMask = currentMask.scaled(slmWidth, slmHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+
+        updatePhasePreview();
+
+        QString statusMessage = QString("RME mask generated (non-iterative, %1/%2 valid targets).")
+                                    .arg(result.usedTargetCount)
+                                    .arg(result.requestedTargetCount);
+        if (result.skippedOutsideCameraFov > 0 || result.skippedOutsideSlmBounds > 0) {
+            statusMessage += QString(" Skipped (camera/slm): %1/%2.")
+                                 .arg(result.skippedOutsideCameraFov)
+                                 .arg(result.skippedOutsideSlmBounds);
+        }
+        statusBar()->showMessage(statusMessage, 4000);
+        autoSendToSlmIfEnabled();
+        return true;
     }
 
     const int expectedSourceSize = slmWidth * slmHeight;
@@ -1428,7 +1557,7 @@ bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
                                       QString *errorOut) {
     if (!isGerchbergSaxtonSelected()) {
         if (errorOut) {
-            *errorOut = "Gerchberg-Saxton is required for animation playback.";
+            *errorOut = "Gerchberg-Saxton is required for animation playback in v1. Weighted GS and Random Mask Encoding playback are not supported.";
         }
         return false;
     }
@@ -1512,7 +1641,7 @@ bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
 }
 
 void MainWindow::onSendToSlmRequested() {
-    if (isGerchbergSaxtonSelected() && !gridPointData.isEmpty()) {
+    if (isAutoMaskGenerationAlgorithmSelected() && !gridPointData.isEmpty()) {
         if (!generateAlgorithmMask(true, GsRunTrigger::SendToSlmPreRun)) {
             return;
         }
@@ -1553,53 +1682,12 @@ void MainWindow::updateCameraFeed(const QImage &img) {
     }
 
     lastCameraFrame = img.copy();
-    QImage displayImg = img.convertToFormat(QImage::Format_ARGB32);
+    lastRenderedCameraFrame = buildCameraDisplayImage(lastCameraFrame);
+    updateCameraFeedLabel(lastRenderedCameraFrame);
 
-    if (overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
-        QPainter painter(&displayImg);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-
-        const int imgW = displayImg.width();
-        const int imgH = displayImg.height();
-        const double halfW = imgW / 2.0;
-        const double halfH = imgH / 2.0;
-        const int pointRadius = qMax(3, qMin(imgW, imgH) / 90);
-        const int highlightRadius = pointRadius + 4;
-
-        for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
-            const int pointId = it.key();
-            const QPointF p = it.value();
-
-            // Grid is centered Cartesian (+Y up); image is top-left origin (+Y down).
-            const QPointF imagePoint(halfW + p.x(), halfH - p.y());
-            const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), imgW - 1);
-            const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), imgH - 1);
-
-            if (pointId == selectedPointId) {
-                painter.setPen(QPen(QColor(120, 255, 120, 190), 2));
-                painter.setBrush(QColor(120, 255, 120, 80));
-                painter.drawEllipse(QPoint(px, py), highlightRadius, highlightRadius);
-            }
-
-            painter.setPen(QPen(QColor(80, 190, 255, 210), 2));
-            painter.setBrush(QColor(80, 190, 255, 95));
-            painter.drawEllipse(QPoint(px, py), pointRadius, pointRadius);
-        }
+    if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+        updateExternalCameraPreview();
     }
-
-    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
-        QTransform transform;
-        if (flipCameraX || flipCameraY) {
-            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
-        }
-        if (cameraViewRotationDegrees != 0) {
-            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
-        }
-        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
-    }
-
-    cameraFeedLabel->setPixmap(QPixmap::fromImage(displayImg).scaled(
-        cameraFeedLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
 void MainWindow::loadTargetImage() {
@@ -1674,16 +1762,89 @@ void MainWindow::onFPSUpdated(const QString &fpsString) {
     fpsLabel->setText(fpsString);
 }
 
+void MainWindow::onCameraPreviewMonitorChanged(int index) {
+    if (!cameraPreviewMonitorCombo || index < 0) {
+        updateCameraPreviewButtonState();
+        return;
+    }
+
+    bool ok = false;
+    const int monitorNumber = cameraPreviewMonitorCombo->itemData(index).toInt(&ok);
+    if (!ok || monitorNumber < 1) {
+        updateCameraPreviewButtonState();
+        return;
+    }
+
+    cameraPreviewMonitorNumber = monitorNumber;
+    persistSelectedCameraPreviewMonitor();
+    updateCameraPreviewButtonState();
+    statusBar()->showMessage(QString("Camera preview monitor set to Monitor %1").arg(cameraPreviewMonitorNumber), 4000);
+
+    if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+        updateExternalCameraPreview();
+    }
+}
+
+void MainWindow::onCameraPreviewToggled(bool checked) {
+    updateCameraPreviewButtonText();
+
+    if (!checked) {
+        clearCameraPreviewOutput();
+        statusBar()->showMessage("Camera preview monitor output hidden.", 3000);
+        return;
+    }
+
+    if (!isSelectedCameraPreviewMonitorAvailable()) {
+        QSignalBlocker blocker(cameraPreviewToggleBtn);
+        cameraPreviewToggleBtn->setChecked(false);
+        updateCameraPreviewButtonText();
+        statusBar()->showMessage("Choose a connected monitor for camera preview.", 4000);
+        return;
+    }
+
+    updateExternalCameraPreview();
+    statusBar()->showMessage(QString("Camera preview mirrored to Monitor %1").arg(cameraPreviewMonitorNumber), 4000);
+}
+
+void MainWindow::onScreenTopologyChanged() {
+    const bool wasActive = cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked();
+    const int missingMonitorNumber = cameraPreviewMonitorNumber;
+
+    refreshCameraPreviewMonitorOptions();
+
+    if (wasActive && !isSelectedCameraPreviewMonitorAvailable()) {
+        if (cameraPreviewToggleBtn) {
+            QSignalBlocker blocker(cameraPreviewToggleBtn);
+            cameraPreviewToggleBtn->setChecked(false);
+        }
+        updateCameraPreviewButtonText();
+        clearCameraPreviewOutput();
+        statusBar()->showMessage(
+            QString("Camera preview monitor %1 is not connected. External preview stopped.")
+                .arg(missingMonitorNumber),
+            5000);
+        return;
+    }
+
+    if (wasActive) {
+        updateExternalCameraPreview();
+    }
+}
+
 void MainWindow::onGridPointAdded(int pointId, QPointF pixelCoords) {
     gridPointData[pointId] = pixelCoords;
 
     // Add row to trap table
     int row = trapTable->rowCount();
+    trapTableSyncInProgress = true;
     trapTable->insertRow(row);
 
-    trapTable->setItem(row, 0, new QTableWidgetItem(QString::number(pointId)));
+    QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(pointId));
+    idItem->setFlags(idItem->flags() & ~Qt::ItemIsEditable);
+    trapTable->setItem(row, 0, idItem);
     trapTable->setItem(row, 1, new QTableWidgetItem(QString::number((int)pixelCoords.x())));
     trapTable->setItem(row, 2, new QTableWidgetItem(QString::number((int)pixelCoords.y())));
+    trapTableSyncInProgress = false;
 
     if (!suppressGridStatusMessages) {
         lastGeneratedPatternSummary.clear();
@@ -1703,9 +1864,22 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
 
         // Update table row
         for (int row = 0; row < trapTable->rowCount(); ++row) {
-            if (trapTable->item(row, 0)->text().toInt() == pointId) {
-                trapTable->setItem(row, 1, new QTableWidgetItem(QString::number((int)newPixelCoords.x())));
-                trapTable->setItem(row, 2, new QTableWidgetItem(QString::number((int)newPixelCoords.y())));
+            QTableWidgetItem *idItem = trapTable->item(row, 0);
+            if (idItem && idItem->text().toInt() == pointId) {
+                trapTableSyncInProgress = true;
+                QTableWidgetItem *xItem = trapTable->item(row, 1);
+                QTableWidgetItem *yItem = trapTable->item(row, 2);
+                if (!xItem) {
+                    xItem = new QTableWidgetItem();
+                    trapTable->setItem(row, 1, xItem);
+                }
+                if (!yItem) {
+                    yItem = new QTableWidgetItem();
+                    trapTable->setItem(row, 2, yItem);
+                }
+                xItem->setText(QString::number((int)newPixelCoords.x()));
+                yItem->setText(QString::number((int)newPixelCoords.y()));
+                trapTableSyncInProgress = false;
                 break;
             }
         }
@@ -1713,6 +1887,94 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
         lastGeneratedPatternSummary.clear();
         lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)").arg(pointId).arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()), 2000);
+        scheduleGsAutoRun();
+        if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
+    }
+}
+
+void MainWindow::onTrapTableItemChanged(QTableWidgetItem *item) {
+    if (!item || trapTableSyncInProgress) {
+        return;
+    }
+
+    const int row = item->row();
+    const int column = item->column();
+    if (row < 0 || row >= trapTable->rowCount()) {
+        return;
+    }
+    if (column != 1 && column != 2) {
+        return;
+    }
+
+    QTableWidgetItem *idItem = trapTable->item(row, 0);
+    if (!idItem) {
+        return;
+    }
+
+    bool idOk = false;
+    const int pointId = idItem->text().toInt(&idOk);
+    if (!idOk || !gridPointData.contains(pointId)) {
+        return;
+    }
+
+    const QPointF previousCoords = gridPointData.value(pointId);
+    bool valueOk = false;
+    const int typedValue = item->text().trimmed().toInt(&valueOk);
+    if (!valueOk) {
+        trapTableSyncInProgress = true;
+        item->setText(QString::number(column == 1 ? static_cast<int>(previousCoords.x())
+                                                  : static_cast<int>(previousCoords.y())));
+        trapTableSyncInProgress = false;
+        return;
+    }
+
+    const double halfWidth = camWidth / 2.0;
+    const double halfHeight = camHeight / 2.0;
+
+    QPointF updatedCoords = previousCoords;
+    if (column == 1) {
+        updatedCoords.setX(typedValue);
+    } else {
+        updatedCoords.setY(typedValue);
+    }
+    updatedCoords.setX(qBound(-halfWidth, updatedCoords.x(), halfWidth));
+    updatedCoords.setY(qBound(-halfHeight, updatedCoords.y(), halfHeight));
+
+    if (!targetGridWidget || !targetGridWidget->setPointCoordinates(pointId, updatedCoords)) {
+        trapTableSyncInProgress = true;
+        item->setText(QString::number(column == 1 ? static_cast<int>(previousCoords.x())
+                                                  : static_cast<int>(previousCoords.y())));
+        trapTableSyncInProgress = false;
+        return;
+    }
+
+    gridPointData[pointId] = updatedCoords;
+
+    trapTableSyncInProgress = true;
+    QTableWidgetItem *xItem = trapTable->item(row, 1);
+    QTableWidgetItem *yItem = trapTable->item(row, 2);
+    if (!xItem) {
+        xItem = new QTableWidgetItem();
+        trapTable->setItem(row, 1, xItem);
+    }
+    if (!yItem) {
+        yItem = new QTableWidgetItem();
+        trapTable->setItem(row, 2, yItem);
+    }
+    xItem->setText(QString::number(static_cast<int>(updatedCoords.x())));
+    yItem->setText(QString::number(static_cast<int>(updatedCoords.y())));
+    trapTableSyncInProgress = false;
+
+    if (updatedCoords != previousCoords) {
+        lastGeneratedPatternSummary.clear();
+        lastGeneratedPatternDetails.clear();
+        statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)")
+                                     .arg(pointId)
+                                     .arg(static_cast<int>(updatedCoords.x()))
+                                     .arg(static_cast<int>(updatedCoords.y())),
+                                 2000);
         scheduleGsAutoRun();
         if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
             updateCameraFeed(lastCameraFrame);
@@ -2717,6 +2979,24 @@ void MainWindow::persistSelectedMonitor() {
     settings.sync();
 }
 
+bool MainWindow::isSelectedCameraPreviewMonitorAvailable() const {
+    const int count = QGuiApplication::screens().size();
+    return cameraPreviewMonitorNumber >= 1 && cameraPreviewMonitorNumber <= count;
+}
+
+QScreen *MainWindow::selectedCameraPreviewScreen() const {
+    if (!isSelectedCameraPreviewMonitorAvailable()) {
+        return nullptr;
+    }
+    return QGuiApplication::screens().at(cameraPreviewMonitorNumber - 1);
+}
+
+void MainWindow::persistSelectedCameraPreviewMonitor() {
+    QSettings settings(configPath(), QSettings::IniFormat);
+    settings.setValue("Hardware/CameraPreview_SelectedMonitor", cameraPreviewMonitorNumber);
+    settings.sync();
+}
+
 void MainWindow::persistCorrectionPath(const QString &path) {
     correctionMaskPath = path;
     QSettings settings(configPath(), QSettings::IniFormat);
@@ -2791,6 +3071,214 @@ void MainWindow::clearDirectOutput() {
     }
 
     directOutputWindow->hide();
+}
+
+QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
+    if (img.isNull()) {
+        return QImage();
+    }
+
+    QImage displayImg = img.convertToFormat(QImage::Format_ARGB32);
+
+    if (overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
+        QPainter painter(&displayImg);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        const int imgW = displayImg.width();
+        const int imgH = displayImg.height();
+        const double halfW = imgW / 2.0;
+        const double halfH = imgH / 2.0;
+        const int pointRadius = qMax(3, qMin(imgW, imgH) / 90);
+        const int highlightRadius = pointRadius + 4;
+
+        for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
+            const int pointId = it.key();
+            const QPointF p = it.value();
+
+            // Grid is centered Cartesian (+Y up); image is top-left origin (+Y down).
+            const QPointF imagePoint(halfW + p.x(), halfH - p.y());
+            const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), imgW - 1);
+            const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), imgH - 1);
+
+            if (pointId == selectedPointId) {
+                painter.setPen(QPen(QColor(120, 255, 120, 190), 2));
+                painter.setBrush(QColor(120, 255, 120, 80));
+                painter.drawEllipse(QPoint(px, py), highlightRadius, highlightRadius);
+            }
+
+            painter.setPen(QPen(QColor(80, 190, 255, 210), 2));
+            painter.setBrush(QColor(80, 190, 255, 95));
+            painter.drawEllipse(QPoint(px, py), pointRadius, pointRadius);
+        }
+    }
+
+    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
+        QTransform transform;
+        if (flipCameraX || flipCameraY) {
+            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
+        }
+        if (cameraViewRotationDegrees != 0) {
+            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        }
+        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
+    }
+
+    return displayImg;
+}
+
+void MainWindow::updateCameraFeedLabel(const QImage &displayImg) {
+    if (!cameraFeedLabel || displayImg.isNull()) {
+        return;
+    }
+
+    cameraFeedLabel->setText(QString());
+    cameraFeedLabel->setPixmap(QPixmap::fromImage(displayImg).scaled(
+        cameraFeedLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void MainWindow::refreshCameraPreviewMonitorOptions() {
+    if (!cameraPreviewMonitorCombo) {
+        return;
+    }
+
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    QSignalBlocker blocker(cameraPreviewMonitorCombo);
+    cameraPreviewMonitorCombo->clear();
+
+    for (int i = 0; i < screens.size(); ++i) {
+        QScreen *screen = screens.at(i);
+        const QSize size = screen->geometry().size();
+        cameraPreviewMonitorCombo->addItem(
+            QString("Monitor %1: %2 (%3x%4)")
+                .arg(i + 1)
+                .arg(screen->name())
+                .arg(size.width())
+                .arg(size.height()),
+            i + 1);
+    }
+
+    cameraPreviewMonitorCombo->setEnabled(!screens.isEmpty());
+
+    const int selectedIndex = cameraPreviewMonitorCombo->findData(cameraPreviewMonitorNumber);
+    if (selectedIndex >= 0) {
+        cameraPreviewMonitorCombo->setPlaceholderText("Select monitor");
+        cameraPreviewMonitorCombo->setCurrentIndex(selectedIndex);
+        cameraPreviewMonitorCombo->setToolTip(cameraPreviewMonitorCombo->itemText(selectedIndex));
+    } else if (screens.isEmpty()) {
+        cameraPreviewMonitorCombo->setCurrentIndex(-1);
+        cameraPreviewMonitorCombo->setPlaceholderText("No monitors detected");
+        cameraPreviewMonitorCombo->setToolTip("No connected monitors are available for camera preview.");
+    } else {
+        cameraPreviewMonitorCombo->setCurrentIndex(-1);
+        cameraPreviewMonitorCombo->setPlaceholderText(
+            QString("Monitor %1 unavailable").arg(cameraPreviewMonitorNumber));
+        cameraPreviewMonitorCombo->setToolTip(
+            QString("Selected monitor %1 is not connected. Choose another monitor.")
+                .arg(cameraPreviewMonitorNumber));
+    }
+
+    updateCameraPreviewButtonState();
+}
+
+void MainWindow::updateCameraPreviewButtonState() {
+    if (!cameraPreviewToggleBtn) {
+        return;
+    }
+
+    const bool monitorAvailable = isSelectedCameraPreviewMonitorAvailable();
+    cameraPreviewToggleBtn->setEnabled(monitorAvailable);
+    cameraPreviewToggleBtn->setToolTip(monitorAvailable
+                                           ? "Mirror the current camera preview on the selected monitor."
+                                           : "Choose a connected monitor for camera preview.");
+    updateCameraPreviewButtonText();
+}
+
+void MainWindow::updateCameraPreviewButtonText() {
+    if (!cameraPreviewToggleBtn) {
+        return;
+    }
+
+    cameraPreviewToggleBtn->setText(cameraPreviewToggleBtn->isChecked()
+                                        ? "Hide From Monitor"
+                                        : "Show On Monitor");
+}
+
+void MainWindow::ensureCameraPreviewWindow() {
+    if (cameraPreviewWindow) {
+        return;
+    }
+
+    cameraPreviewWindow = new QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    cameraPreviewWindow->setAttribute(Qt::WA_QuitOnClose, false);
+    cameraPreviewWindow->setWindowFlag(Qt::BypassWindowManagerHint, true);
+    cameraPreviewWindowLabel = new QLabel(cameraPreviewWindow);
+    cameraPreviewWindowLabel->setAlignment(Qt::AlignCenter);
+    cameraPreviewWindowLabel->setScaledContents(false);
+}
+
+void MainWindow::updateExternalCameraPreview() {
+    if (!cameraPreviewToggleBtn || !cameraPreviewToggleBtn->isChecked()) {
+        return;
+    }
+
+    QScreen *screen = selectedCameraPreviewScreen();
+    if (!screen) {
+        clearCameraPreviewOutput();
+        return;
+    }
+
+    ensureCameraPreviewWindow();
+
+    const QRect screenGeometry = screen->geometry();
+    QImage canvas(screenGeometry.size(), QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::black);
+
+    QPainter painter(&canvas);
+    if (cameraFeedActive && !lastRenderedCameraFrame.isNull()) {
+        QSize targetSize = lastRenderedCameraFrame.size();
+        targetSize.scale(canvas.size(), Qt::KeepAspectRatio);
+        const QRect targetRect(QPoint((canvas.width() - targetSize.width()) / 2,
+                                      (canvas.height() - targetSize.height()) / 2),
+                               targetSize);
+        painter.drawImage(targetRect, lastRenderedCameraFrame);
+    } else {
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+        painter.setPen(QColor(150, 150, 150));
+
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSize(qMax(18, qMin(canvas.width(), canvas.height()) / 28));
+        painter.setFont(font);
+        painter.drawText(canvas.rect(), Qt::AlignCenter, "Camera Feed (Offline)");
+    }
+    painter.end();
+
+    cameraPreviewWindow->setGeometry(screenGeometry);
+    cameraPreviewWindowLabel->setGeometry(0, 0, canvas.width(), canvas.height());
+    cameraPreviewWindowLabel->setPixmap(QPixmap::fromImage(canvas));
+
+    cameraPreviewWindow->createWinId();
+    if (cameraPreviewWindow->windowHandle()) {
+        cameraPreviewWindow->windowHandle()->setScreen(screen);
+    }
+
+    cameraPreviewWindow->showFullScreen();
+    cameraPreviewWindow->raise();
+}
+
+void MainWindow::clearCameraPreviewOutput() {
+    if (!cameraPreviewWindow) {
+        return;
+    }
+
+    cameraPreviewWindow->hide();
+}
+
+void MainWindow::handleCameraFeedStopped() {
+    cameraFeedActive = false;
+    if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+        updateExternalCameraPreview();
+    }
 }
 
 void MainWindow::refreshMonitorSelectionMenu() {

@@ -61,6 +61,9 @@ private slots:
     void onFPSUpdated(const QString &fpsString);
     void savePhaseMask();
     void updateCameraFeed(const QImage &img);
+    void onCameraPreviewMonitorChanged(int index);
+    void onCameraPreviewToggled(bool checked);
+    void onScreenTopologyChanged();
 
     // Algorithm slots
     void onAlgorithmSelectionChanged(int index);
@@ -88,6 +91,7 @@ private slots:
     void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
     void onGridPointRemoved(int pointId);
     void onGridPointSelected(int pointId);
+    void onTrapTableItemChanged(QTableWidgetItem *item);
     void onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details);
     void onAnimationPresetChanged(int index);
     void onGenerateAnimationSequenceClicked();
@@ -147,10 +151,22 @@ private:
     bool isSelectedMonitorAvailable() const;
     QScreen *selectedScreen() const;
     void persistSelectedMonitor();
+    bool isSelectedCameraPreviewMonitorAvailable() const;
+    QScreen *selectedCameraPreviewScreen() const;
+    void persistSelectedCameraPreviewMonitor();
     void persistCorrectionPath(const QString &path);
     void ensureDirectOutputWindow();
     void displayDirectOutput(const QImage &finalMask);
     void clearDirectOutput();
+    QImage buildCameraDisplayImage(const QImage &img) const;
+    void updateCameraFeedLabel(const QImage &displayImg);
+    void refreshCameraPreviewMonitorOptions();
+    void updateCameraPreviewButtonState();
+    void updateCameraPreviewButtonText();
+    void ensureCameraPreviewWindow();
+    void updateExternalCameraPreview();
+    void clearCameraPreviewOutput();
+    void handleCameraFeedStopped();
     void tryAutoApplySavedCorrection();
 
     void updateAlgorithmSettingsUi();
@@ -159,6 +175,9 @@ private:
     bool generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger);
     QVector<float> defaultGsSourceAmplitude() const;
     bool isGerchbergSaxtonSelected() const;
+    bool isWeightedGsSelected() const;
+    bool isRandomMaskEncodingSelected() const;
+    bool isAutoMaskGenerationAlgorithmSelected() const;
     bool runGsForTargetPoints(const QVector<QPointF> &points, int iterationsOverride, QImage &outMask, QString *errorOut = nullptr);
     void updateAnimationControlsEnabledState();
     void updateAnimationPreviewLabels(const QVector<QPointF> &points);
@@ -226,6 +245,7 @@ private:
 
     // Algorithm controls
     QComboBox *algorithmCombo = nullptr;
+    QLabel *iterationsLabel = nullptr;
     QSpinBox *iterationsSpin = nullptr;
     QLabel *relaxationLabel = nullptr;
     QDoubleSpinBox *relaxationSpin = nullptr;
@@ -245,6 +265,8 @@ private:
     double sourceBeamWaistPx = 0.0;
 
     QLabel *cameraFeedLabel;
+    QComboBox *cameraPreviewMonitorCombo = nullptr;
+    QPushButton *cameraPreviewToggleBtn = nullptr;
     QCheckBox *overlayTargetCb = nullptr;
     QComboBox *camSelect;
     QPushButton *camStartBtn;
@@ -297,6 +319,7 @@ private:
     // SLM Output Routing State
     int slmOutputMode = DllOutputMode;
     int selectedMonitorNumber = 2;
+    int cameraPreviewMonitorNumber = 1;
     int slmActiveWidth = 1272;
     int slmActiveHeight = 1024;
     int slmActiveOffsetX = 0;
@@ -307,6 +330,8 @@ private:
     QActionGroup *monitorActionGroup = nullptr;
     QWidget *directOutputWindow = nullptr;
     QLabel *directOutputLabel = nullptr;
+    QWidget *cameraPreviewWindow = nullptr;
+    QLabel *cameraPreviewWindowLabel = nullptr;
 
     // Auto-run timer
     QTimer *gsAutoRunTimer = nullptr;
@@ -328,9 +353,12 @@ private:
     QMap<int, QPointF> gridPointData;
     int selectedPointId = -1;
     bool suppressGridStatusMessages = false;
+    bool trapTableSyncInProgress = false;
     QString lastGeneratedPatternSummary;
     QString lastGeneratedPatternDetails;
     QImage lastCameraFrame;
+    QImage lastRenderedCameraFrame;
+    bool cameraFeedActive = false;
 };
 
 #endif // MAINWINDOW_H
