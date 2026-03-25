@@ -53,6 +53,7 @@
 #include <QStyle>
 #include <QFontDatabase>
 #include <QSignalBlocker>
+#include <QShortcut>
 
 namespace {
 constexpr int kImageTabIndex = 2;
@@ -918,6 +919,14 @@ void MainWindow::setupConnections() {
             this,
             &MainWindow::onCameraPreviewMonitorChanged);
     connect(cameraPreviewToggleBtn, &QPushButton::toggled, this, &MainWindow::onCameraPreviewToggled);
+
+    QShortcut *hideCameraPreviewShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    hideCameraPreviewShortcut->setContext(Qt::ApplicationShortcut);
+    connect(hideCameraPreviewShortcut, &QShortcut::activated, this, [this]() {
+        if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+            cameraPreviewToggleBtn->setChecked(false);
+        }
+    });
 
     connect(camManager, &CameraManager::frameReady, this, [this](const QImage &image) {
         cameraFeedActive = true;
