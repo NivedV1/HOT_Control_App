@@ -28,8 +28,21 @@ GridPoint::GridPoint(QPointF pixelCoords, int pointId, QGraphicsItem *parent)
 }
 
 QRectF GridPoint::boundingRect() const {
-    return QRectF(-POINT_RADIUS - 2, -POINT_RADIUS - 2,
-                   2 * (POINT_RADIUS + 2), 2 * (POINT_RADIUS + 2));
+    constexpr qreal kPointPad = 2.5;
+    constexpr qreal kLabelWidth = 24.0;
+    constexpr qreal kLabelHeight = 16.0;
+    constexpr qreal kLabelVisualOffset = 12.0;
+
+    const QRectF pointRect(-POINT_RADIUS - kPointPad,
+                           -POINT_RADIUS - kPointPad,
+                           2.0 * (POINT_RADIUS + kPointPad),
+                           2.0 * (POINT_RADIUS + kPointPad));
+    // Label is drawn with a local Y counter-flip and ends up below the point in item coordinates.
+    const QRectF labelRect(-kLabelWidth / 2.0,
+                           POINT_RADIUS + kLabelVisualOffset,
+                           kLabelWidth,
+                           kLabelHeight);
+    return pointRect.united(labelRect);
 }
 
 void GridPoint::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) {
@@ -46,17 +59,17 @@ void GridPoint::paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
 
     painter->drawEllipse(QPointF(0, 0), POINT_RADIUS, POINT_RADIUS);
 
-    // Draw point ID text
-    if (selected) {
-        painter->setPen(QPen(QColor(0, 255, 0)));
-        painter->save();
-        // The view uses a flipped Y axis; counter-flip so label text is upright.
-        painter->scale(1.0, -1.0);
-        painter->drawText(QRectF(-10.0, -(POINT_RADIUS + 28.0), 20.0, 16.0),
-                          Qt::AlignCenter,
-                          QString::number(pointId));
-        painter->restore();
-    }
+    // Draw point ID text for all points: 40% opacity normally, full opacity when selected.
+    QColor labelColor = selected ? QColor(0, 255, 0) : QColor(100, 150, 255);
+    labelColor.setAlpha(selected ? 255 : 102); // 102/255 ~= 40%
+    painter->setPen(QPen(labelColor));
+    painter->save();
+    // The view uses a flipped Y axis; counter-flip so label text is upright.
+    painter->scale(1.0, -1.0);
+    painter->drawText(QRectF(-12.0, -(POINT_RADIUS + 28.0), 24.0, 16.0),
+                      Qt::AlignCenter,
+                      QString::number(pointId));
+    painter->restore();
 }
 
 void GridPoint::mousePressEvent(QGraphicsSceneMouseEvent *event) {
@@ -156,6 +169,20 @@ void TargetGridWidget::removePoint(int pointId) {
             delete gridPoints[i];
             gridPoints.removeAt(i);
             emit pointRemoved(pointId);
+
+            // Keep IDs intuitive after deletions:
+            // if empty restart at 1, otherwise continue from current max + 1.
+            if (gridPoints.isEmpty()) {
+                nextPointId = 1;
+            } else {
+                int maxPointId = 0;
+                for (const GridPoint *point : gridPoints) {
+                    if (point && point->getPointId() > maxPointId) {
+                        maxPointId = point->getPointId();
+                    }
+                }
+                nextPointId = maxPointId + 1;
+            }
             break;
         }
     }
