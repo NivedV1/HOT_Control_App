@@ -177,6 +177,7 @@ private:
     void updateExternalCameraPreview();
     void clearCameraPreviewOutput();
     void handleCameraFeedStopped();
+    void updateCameraPixelReadout(const QPoint &labelPos, bool validHover);
     void tryAutoApplySavedCorrection();
 
     void updateAlgorithmSettingsUi();
@@ -275,6 +276,7 @@ private:
     double sourceBeamWaistPx = 0.0;
 
     QLabel *cameraFeedLabel;
+    QLabel *cameraPixelLabel = nullptr;
     QComboBox *cameraPreviewMonitorCombo = nullptr;
     QPushButton *cameraPreviewToggleBtn = nullptr;
     QCheckBox *overlayTargetCb = nullptr;
