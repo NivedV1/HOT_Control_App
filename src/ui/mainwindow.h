@@ -93,6 +93,7 @@ private slots:
     void onGridPointMoved(int pointId, QPointF newPhysicalCoords);
     void onGridPointRemoved(int pointId);
     void onGridPointSelected(int pointId);
+    void onGridPointDeselected();
     void onTrapTableItemChanged(QTableWidgetItem *item);
     void onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details);
     void onAnimationPresetChanged(int index);
@@ -178,6 +179,7 @@ private:
     void clearCameraPreviewOutput();
     void handleCameraFeedStopped();
     void updateCameraPixelReadout(const QPoint &labelPos, bool validHover);
+    void updateGridHoverReadout(const QPoint &viewportPos, bool validHover);
     void tryAutoApplySavedCorrection();
 
     void updateAlgorithmSettingsUi();
@@ -210,6 +212,7 @@ private:
     PatternPresetsWidget *patternPresetsWidget = nullptr;
     QTableWidget *trapTable;
     QLabel *phaseMaskLabel;
+    QLabel *gridHoverLabel = nullptr;
     QLabel *resolutionLabel;
     QLabel *fpsLabel;
     QCheckBox *previewCorrectionCb;

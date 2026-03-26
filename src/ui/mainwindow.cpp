@@ -54,6 +54,7 @@
 #include <QFontDatabase>
 #include <QSignalBlocker>
 #include <QShortcut>
+#include <QCursor>
 #include <QMouseEvent>
 #include <QEvent>
 #include <QtMath>
@@ -517,6 +518,8 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     gridToolsLayout->setSpacing(10);
     
     gridToolsLayout->addSpacing(10);  // Spacer for target grid column
+    gridHoverLabel = new QLabel("Grid: --, --");
+    gridToolsLayout->addWidget(gridHoverLabel);
     gridToolsLayout->addStretch();
     
     toolsRow->setLayout(gridToolsLayout);
@@ -856,6 +859,11 @@ void MainWindow::setupConnections() {
     if (cameraFeedLabel) {
         cameraFeedLabel->installEventFilter(this);
     }
+    if (targetGridWidget && targetGridWidget->viewport()) {
+        targetGridWidget->setMouseTracking(true);
+        targetGridWidget->viewport()->setMouseTracking(true);
+        targetGridWidget->viewport()->installEventFilter(this);
+    }
 
     for (const QString &camName : camManager->getCameraNames()) {
         camSelect->addItem(camName);
@@ -890,6 +898,7 @@ void MainWindow::setupConnections() {
     connect(targetGridWidget, &TargetGridWidget::pointMoved, this, &MainWindow::onGridPointMoved);
     connect(targetGridWidget, &TargetGridWidget::pointRemoved, this, &MainWindow::onGridPointRemoved);
     connect(targetGridWidget, &TargetGridWidget::pointSelected, this, &MainWindow::onGridPointSelected);
+    connect(targetGridWidget, &TargetGridWidget::pointDeselected, this, &MainWindow::onGridPointDeselected);
     connect(trapTable, &QTableWidget::itemChanged, this, &MainWindow::onTrapTableItemChanged);
     // Manual tab button connections
     connect(addPointsBtn, &QPushButton::clicked, this, [this]() {
@@ -1935,6 +1944,9 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
         lastGeneratedPatternSummary.clear();
         lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)").arg(pointId).arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()), 2000);
+        if (pointId == selectedPointId && gridHoverLabel) {
+            gridHoverLabel->setText(QString("Grid: %1, %2").arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()));
+        }
         scheduleGsAutoRun();
         if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
             updateCameraFeed(lastCameraFrame);
@@ -2049,6 +2061,11 @@ void MainWindow::onGridPointRemoved(int pointId) {
         if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
             updateCameraFeed(lastCameraFrame);
         }
+
+        if (pointId == selectedPointId) {
+            selectedPointId = -1;
+            updateGridHoverReadout(QPoint(), false);
+        }
     }
 }
 
@@ -2063,10 +2080,27 @@ void MainWindow::onGridPointSelected(int pointId) {
         }
     }
     
+    if (gridPointData.contains(pointId) && gridHoverLabel) {
+        const QPointF p = gridPointData.value(pointId);
+        gridHoverLabel->setText(QString("Grid: %1, %2").arg((int)p.x()).arg((int)p.y()));
+    }
+
     statusBar()->showMessage(QString("Point #%1 selected (use arrow keys to move, Delete to remove)").arg(pointId), 3000);
     if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
         updateCameraFeed(lastCameraFrame);
     }
+}
+
+void MainWindow::onGridPointDeselected() {
+    selectedPointId = -1;
+    if (!targetGridWidget || !targetGridWidget->viewport()) {
+        updateGridHoverReadout(QPoint(), false);
+        return;
+    }
+
+    const QPoint viewportPos = targetGridWidget->viewport()->mapFromGlobal(QCursor::pos());
+    const bool inside = targetGridWidget->viewport()->rect().contains(viewportPos);
+    updateGridHoverReadout(viewportPos, inside);
 }
 
 void MainWindow::onPatternGenerated(const QVector<QPointF> &points, const QString &summary, const QString &details) {
@@ -2079,6 +2113,7 @@ void MainWindow::onPatternGenerated(const QVector<QPointF> &points, const QStrin
 void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
     suppressGridStatusMessages = true;
     selectedPointId = -1;
+    updateGridHoverReadout(QPoint(), false);
 
     gridPointData.clear();
     trapTable->setRowCount(0);
@@ -3306,6 +3341,34 @@ void MainWindow::updateCameraPixelReadout(const QPoint &labelPos, bool validHove
     cameraPixelLabel->setText(QString("Pixel: %1, %2 | I: %3").arg(absX).arg(absY).arg(intensity));
 }
 
+void MainWindow::updateGridHoverReadout(const QPoint &viewportPos, bool validHover) {
+    if (!gridHoverLabel || !targetGridWidget) {
+        return;
+    }
+
+    if (selectedPointId >= 0 && gridPointData.contains(selectedPointId)) {
+        const QPointF p = gridPointData.value(selectedPointId);
+        gridHoverLabel->setText(QString("Grid: %1, %2").arg((int)p.x()).arg((int)p.y()));
+        return;
+    }
+
+    if (!validHover) {
+        gridHoverLabel->setText("Grid: --, --");
+        return;
+    }
+
+    const QPointF scenePos = targetGridWidget->mapToScene(viewportPos);
+    const QRectF bounds = targetGridWidget->sceneRect();
+    if (!bounds.contains(scenePos)) {
+        gridHoverLabel->setText("Grid: --, --");
+        return;
+    }
+
+    const int gx = qRound(scenePos.x());
+    const int gy = qRound(scenePos.y());
+    gridHoverLabel->setText(QString("Grid: %1, %2").arg(gx).arg(gy));
+}
+
 void MainWindow::updateCameraFeedLabel(const QImage &displayImg) {
     if (!cameraFeedLabel || displayImg.isNull()) {
         return;
@@ -3390,6 +3453,15 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
                 updateCameraPixelReadout(mouseEvent->pos(), true);
                 return true;
             }
+        }
+    }
+
+    if (targetGridWidget && watched == targetGridWidget->viewport()) {
+        if (event->type() == QEvent::MouseMove) {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            updateGridHoverReadout(mouseEvent->pos(), true);
+        } else if (event->type() == QEvent::Leave) {
+            updateGridHoverReadout(QPoint(), false);
         }
     }
 
