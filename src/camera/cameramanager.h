@@ -13,6 +13,8 @@
 #include <QTimer>
 #include <QImage>
 #include <QStringList>
+#include <QRectF>
+#include <QSize>
 
 // --- NEW: OpenCV Header ---
 #include <opencv2/opencv.hpp>
@@ -44,6 +46,7 @@ public slots:
     void stopCamera();
     void captureImage();
     void toggleRecording(bool checked);
+    void setZoomRegionNormalized(const QRectF &roiNormalized, bool enabled);
 
 signals:
     void statusMessage(const QString &msg);
@@ -61,6 +64,11 @@ private slots:
     void checkUdpHealth();
 
 private:
+    QRectF normalizedZoomRoiForSize(const QSize &size, const QRectF &roi) const;
+    QRect zoomCropRectForSize(const QSize &size) const;
+    QImage applyZoomCrop(const QImage &image) const;
+    cv::Mat applyZoomCropMat(const cv::Mat &frame) const;
+
     CameraBackend backend;
     int currentCamIndex = 0;
 
@@ -95,6 +103,8 @@ private:
     // FPS counting
     QTimer *fpsTimer;
     int frameCount = 0;
+    QRectF zoomRoiNormalized = QRectF(0.0, 0.0, 1.0, 1.0);
+    bool zoomEnabled = false;
 };
 
 #endif // CAMERAMANAGER_H

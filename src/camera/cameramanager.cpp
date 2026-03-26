@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QCoreApplication>
+#include <QtMath>
 
 CameraManager::CameraManager(int engineBackend,
                              const QString &bindIp,
@@ -159,6 +160,104 @@ void CameraManager::stopCamera() {
     }
 }
 
+void CameraManager::setZoomRegionNormalized(const QRectF &roiNormalized, bool enabled) {
+    constexpr qreal kMinNormalizedExtent = 0.03;
+    zoomEnabled = enabled;
+    if (!zoomEnabled) {
+        zoomRoiNormalized = QRectF(0.0, 0.0, 1.0, 1.0);
+        return;
+    }
+
+    const qreal left = qBound(0.0, qMin(roiNormalized.left(), roiNormalized.right()), 1.0);
+    const qreal right = qBound(0.0, qMax(roiNormalized.left(), roiNormalized.right()), 1.0);
+    const qreal top = qBound(0.0, qMin(roiNormalized.top(), roiNormalized.bottom()), 1.0);
+    const qreal bottom = qBound(0.0, qMax(roiNormalized.top(), roiNormalized.bottom()), 1.0);
+
+    const qreal width = qBound<qreal>(kMinNormalizedExtent, right - left, 1.0);
+    const qreal height = qBound<qreal>(kMinNormalizedExtent, bottom - top, 1.0);
+    const qreal x = qBound(0.0, left, 1.0 - width);
+    const qreal y = qBound(0.0, top, 1.0 - height);
+    zoomRoiNormalized = QRectF(x, y, width, height);
+}
+
+QRectF CameraManager::normalizedZoomRoiForSize(const QSize &size, const QRectF &roi) const {
+    constexpr qreal kMinNormalizedExtent = 0.03;
+    if (size.width() <= 0 || size.height() <= 0) {
+        return QRectF(0.0, 0.0, 1.0, 1.0);
+    }
+
+    const qreal left = qBound(0.0, qMin(roi.left(), roi.right()), 1.0);
+    const qreal right = qBound(0.0, qMax(roi.left(), roi.right()), 1.0);
+    const qreal top = qBound(0.0, qMin(roi.top(), roi.bottom()), 1.0);
+    const qreal bottom = qBound(0.0, qMax(roi.top(), roi.bottom()), 1.0);
+
+    qreal width = qMax<qreal>(kMinNormalizedExtent, right - left);
+    qreal height = qMax<qreal>(kMinNormalizedExtent, bottom - top);
+    const qreal aspect = static_cast<qreal>(size.width()) / static_cast<qreal>(size.height());
+
+    if (width / height > aspect) {
+        height = width / aspect;
+    } else {
+        width = height * aspect;
+    }
+
+    if (width > 1.0 || height > 1.0) {
+        const qreal scale = qMin(1.0 / width, 1.0 / height);
+        width *= scale;
+        height *= scale;
+    }
+
+    width = qBound<qreal>(kMinNormalizedExtent, width, 1.0);
+    height = qBound<qreal>(kMinNormalizedExtent, height, 1.0);
+
+    const qreal cx = qBound(0.0, (left + right) * 0.5, 1.0);
+    const qreal cy = qBound(0.0, (top + bottom) * 0.5, 1.0);
+    const qreal x = qBound(0.0, cx - width * 0.5, 1.0 - width);
+    const qreal y = qBound(0.0, cy - height * 0.5, 1.0 - height);
+    return QRectF(x, y, width, height);
+}
+
+QRect CameraManager::zoomCropRectForSize(const QSize &size) const {
+    if (!zoomEnabled || size.width() <= 0 || size.height() <= 0) {
+        return QRect(QPoint(0, 0), size);
+    }
+
+    const QRectF roi = normalizedZoomRoiForSize(size, zoomRoiNormalized);
+    const int x0 = qBound(0, static_cast<int>(qFloor(roi.left() * size.width())), size.width() - 1);
+    const int y0 = qBound(0, static_cast<int>(qFloor(roi.top() * size.height())), size.height() - 1);
+    const int x1 = qBound(x0 + 1, static_cast<int>(qCeil(roi.right() * size.width())), size.width());
+    const int y1 = qBound(y0 + 1, static_cast<int>(qCeil(roi.bottom() * size.height())), size.height());
+    return QRect(x0, y0, x1 - x0, y1 - y0);
+}
+
+QImage CameraManager::applyZoomCrop(const QImage &image) const {
+    if (image.isNull() || !zoomEnabled) {
+        return image;
+    }
+
+    const QRect cropRect = zoomCropRectForSize(image.size());
+    if (cropRect.width() <= 0 || cropRect.height() <= 0 ||
+        cropRect == QRect(QPoint(0, 0), image.size())) {
+        return image;
+    }
+    return image.copy(cropRect);
+}
+
+cv::Mat CameraManager::applyZoomCropMat(const cv::Mat &frame) const {
+    if (frame.empty() || !zoomEnabled) {
+        return frame;
+    }
+
+    const QRect cropRect = zoomCropRectForSize(QSize(frame.cols, frame.rows));
+    if (cropRect.width() <= 0 || cropRect.height() <= 0 ||
+        cropRect == QRect(0, 0, frame.cols, frame.rows)) {
+        return frame;
+    }
+
+    const cv::Rect roi(cropRect.x(), cropRect.y(), cropRect.width(), cropRect.height());
+    return frame(roi).clone();
+}
+
 void CameraManager::captureImage() {
     QString settingsPath = QDir(QCoreApplication::applicationDirPath()).filePath("hardware_config.ini");
     QSettings settings(settingsPath, QSettings::IniFormat);
@@ -189,6 +288,7 @@ void CameraManager::captureImage() {
 
     if (backend == CameraBackend::QtNative && qtCamera && qtCamera->isActive()) {
         QImage toSave = applyTransforms(lastUdpFrame);
+        toSave = applyZoomCrop(toSave);
         if (!toSave.isNull() && toSave.save(path)) {
             emit statusMessage("Image saved: " + path);
         } else {
@@ -200,6 +300,7 @@ void CameraManager::captureImage() {
         cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
         QImage img((const unsigned char*)(frame.data), frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
         QImage toSave = applyTransforms(img);
+        toSave = applyZoomCrop(toSave);
         if (toSave.save(path)) {
             emit statusMessage("OpenCV Image saved: " + path);
         } else {
@@ -211,6 +312,7 @@ void CameraManager::captureImage() {
             return;
         }
         QImage toSave = applyTransforms(lastUdpFrame);
+        toSave = applyZoomCrop(toSave);
         if (toSave.save(path)) {
             emit statusMessage("UDP Stream image saved: " + path);
         } else {
@@ -252,10 +354,12 @@ void CameraManager::toggleRecording(bool checked) {
         cvRot = settings.value("Hardware/Camera_ViewRotation", 0).toInt();
 
         auto getFinalSize = [&](int width, int height) {
+            QSize finalSize(width, height);
             if (cvSaveFollows && (cvRot == 90 || cvRot == 270)) {
-                return cv::Size(height, width);
+                finalSize = QSize(height, width);
             }
-            return cv::Size(width, height);
+            const QRect cropRect = zoomCropRectForSize(finalSize);
+            return cv::Size(cropRect.width(), cropRect.height());
         };
 
         if (backend == CameraBackend::QtNative && qtCamera && qtCamera->isActive()) {
@@ -356,6 +460,7 @@ void CameraManager::onQtFrameReceived(const QVideoFrame &frame) {
                 if (cvRot != 0) trans.rotate(cvRot);
                 toWrite = img.transformed(trans, Qt::SmoothTransformation);
             }
+            toWrite = applyZoomCrop(toWrite);
             QImage imgRGB = toWrite.convertToFormat(QImage::Format_RGB888);
             cv::Mat mat(imgRGB.height(), imgRGB.width(), CV_8UC3, const_cast<uchar*>(imgRGB.constBits()), imgRGB.bytesPerLine());
             cv::Mat bgrMat;
@@ -389,6 +494,7 @@ void CameraManager::processOpenCVFrame() {
             else if (cvRot == 180) cv::rotate(frameToWrite, frameToWrite, cv::ROTATE_180);
             else if (cvRot == 270) cv::rotate(frameToWrite, frameToWrite, cv::ROTATE_90_COUNTERCLOCKWISE);
         }
+        frameToWrite = applyZoomCropMat(frameToWrite);
         cvVideoWriter.write(frameToWrite);
         qint64 duration = QDateTime::currentMSecsSinceEpoch() - cvRecordStartTime;
         onDurationChanged(duration); // Update timer UI
@@ -420,6 +526,7 @@ void CameraManager::onUdpFrameReceived(const QImage &frame, quint32 frameId) {
             if (cvRot != 0) trans.rotate(cvRot);
             toWrite = lastUdpFrame.transformed(trans, Qt::SmoothTransformation);
         }
+        toWrite = applyZoomCrop(toWrite);
         cv::Mat grayMat(toWrite.height(), toWrite.width(), CV_8UC1,
                         const_cast<uchar *>(toWrite.constBits()), toWrite.bytesPerLine());
         cv::Mat bgrMat;

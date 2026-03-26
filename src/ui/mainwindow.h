@@ -14,6 +14,7 @@
 #include <QMap>
 #include <QVector>
 #include <QString>
+#include <QRectF>
 #include <cstdint>
 #include <QLibrary> // For dynamic DLL loading
 
@@ -64,6 +65,7 @@ private slots:
     void onCameraPreviewMonitorChanged(int index);
     void onCameraPreviewToggled(bool checked);
     void onScreenTopologyChanged();
+    void onCameraZoomRoiChanged(const QRectF &roiNormalized, bool enabled);
 
     // Algorithm slots
     void onAlgorithmSelectionChanged(int index);
@@ -106,6 +108,9 @@ private slots:
     void onPythonTrapSelectionChanged(int index);
     void onSavePythonScriptClicked();
     void onLoadPythonScriptClicked();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     enum SlmOutputMode {
@@ -159,6 +164,11 @@ private:
     void displayDirectOutput(const QImage &finalMask);
     void clearDirectOutput();
     QImage buildCameraDisplayImage(const QImage &img) const;
+    QImage applyCameraZoomToDisplayImage(const QImage &img) const;
+    QRect cameraZoomRectForSize(const QSize &size) const;
+    QRectF normalizedCameraZoomRoiForSize(const QSize &size, const QRectF &roi) const;
+    QRect cameraFeedDrawRectForImage(const QSize &imageSize) const;
+    QRectF normalizedSelectionFromPoints(const QPoint &start, const QPoint &end, const QRect &drawRect) const;
     void updateCameraFeedLabel(const QImage &displayImg);
     void refreshCameraPreviewMonitorOptions();
     void updateCameraPreviewButtonState();
@@ -358,6 +368,12 @@ private:
     QString lastGeneratedPatternDetails;
     QImage lastCameraFrame;
     QImage lastRenderedCameraFrame;
+    QImage lastZoomedRenderedCameraFrame;
+    QRectF cameraZoomRoiNormalized = QRectF(0.0, 0.0, 1.0, 1.0);
+    bool cameraZoomEnabled = false;
+    bool cameraZoomDragActive = false;
+    QPoint cameraZoomDragStart;
+    QPoint cameraZoomDragCurrent;
     bool cameraFeedActive = false;
 };
 
