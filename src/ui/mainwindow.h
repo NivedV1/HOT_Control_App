@@ -347,6 +347,7 @@ private:
     QLabel *directOutputLabel = nullptr;
     QWidget *cameraPreviewWindow = nullptr;
     QLabel *cameraPreviewWindowLabel = nullptr;
+    int cameraPreviewWindowMonitorNumber = -1;
 
     // Auto-run timer
     QTimer *gsAutoRunTimer = nullptr;

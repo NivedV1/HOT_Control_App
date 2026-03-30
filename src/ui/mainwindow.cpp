@@ -3163,14 +3163,27 @@ QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
 
     QImage displayImg = img.convertToFormat(QImage::Format_ARGB32);
 
+    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
+        QTransform transform;
+        if (flipCameraX || flipCameraY) {
+            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
+        }
+        if (cameraViewRotationDegrees != 0) {
+            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        }
+        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
+    }
+
     if (overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
         QPainter painter(&displayImg);
         painter.setRenderHint(QPainter::Antialiasing, true);
 
+        const double rawW = qMax(1, img.width());
+        const double rawH = qMax(1, img.height());
+        const double rawHalfW = rawW / 2.0;
+        const double rawHalfH = rawH / 2.0;
         const int imgW = displayImg.width();
         const int imgH = displayImg.height();
-        const double halfW = imgW / 2.0;
-        const double halfH = imgH / 2.0;
         const int pointRadius = qMax(3, qMin(imgW, imgH) / 90);
         const int highlightRadius = pointRadius + 4;
 
@@ -3178,8 +3191,11 @@ QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
             const int pointId = it.key();
             const QPointF p = it.value();
 
-            // Grid is centered Cartesian (+Y up); image is top-left origin (+Y down).
-            const QPointF imagePoint(halfW + p.x(), halfH - p.y());
+            // Overlay intentionally ignores camera rotation and flip so it remains
+            // in the same coordinate orientation as the target grid points.
+            const qreal normX = (p.x() + rawHalfW) / rawW;
+            const qreal normY = (rawHalfH - p.y()) / rawH;
+            const QPointF imagePoint(normX * imgW, normY * imgH);
             const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), imgW - 1);
             const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), imgH - 1);
 
@@ -3193,17 +3209,6 @@ QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
             painter.setBrush(QColor(80, 190, 255, 95));
             painter.drawEllipse(QPoint(px, py), pointRadius, pointRadius);
         }
-    }
-
-    if (cameraViewRotationDegrees != 0 || flipCameraX || flipCameraY) {
-        QTransform transform;
-        if (flipCameraX || flipCameraY) {
-            transform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
-        }
-        if (cameraViewRotationDegrees != 0) {
-            transform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
-        }
-        displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
     }
 
     return displayImg;
@@ -3542,7 +3547,10 @@ void MainWindow::ensureCameraPreviewWindow() {
 
     cameraPreviewWindow = new QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     cameraPreviewWindow->setAttribute(Qt::WA_QuitOnClose, false);
+    cameraPreviewWindow->setAttribute(Qt::WA_ShowWithoutActivating, true);
     cameraPreviewWindow->setWindowFlag(Qt::BypassWindowManagerHint, true);
+    cameraPreviewWindow->setWindowFlag(Qt::WindowDoesNotAcceptFocus, true);
+    cameraPreviewWindow->setFocusPolicy(Qt::NoFocus);
     cameraPreviewWindowLabel = new QLabel(cameraPreviewWindow);
     cameraPreviewWindowLabel->setAlignment(Qt::AlignCenter);
     cameraPreviewWindowLabel->setScaledContents(false);
@@ -3585,17 +3593,23 @@ void MainWindow::updateExternalCameraPreview() {
     }
     painter.end();
 
+    const bool monitorChanged = (cameraPreviewWindowMonitorNumber != cameraPreviewMonitorNumber);
+    const bool geometryChanged = (cameraPreviewWindow->geometry() != screenGeometry);
+    const bool needsReshow = monitorChanged || geometryChanged || !cameraPreviewWindow->isVisible();
+
     cameraPreviewWindow->setGeometry(screenGeometry);
     cameraPreviewWindowLabel->setGeometry(0, 0, canvas.width(), canvas.height());
     cameraPreviewWindowLabel->setPixmap(QPixmap::fromImage(canvas));
 
-    cameraPreviewWindow->createWinId();
-    if (cameraPreviewWindow->windowHandle()) {
-        cameraPreviewWindow->windowHandle()->setScreen(screen);
-    }
+    if (needsReshow) {
+        cameraPreviewWindow->createWinId();
+        if (cameraPreviewWindow->windowHandle()) {
+            cameraPreviewWindow->windowHandle()->setScreen(screen);
+        }
 
-    cameraPreviewWindow->showFullScreen();
-    cameraPreviewWindow->raise();
+        cameraPreviewWindow->showFullScreen();
+        cameraPreviewWindowMonitorNumber = cameraPreviewMonitorNumber;
+    }
 }
 
 void MainWindow::clearCameraPreviewOutput() {
@@ -3604,6 +3618,7 @@ void MainWindow::clearCameraPreviewOutput() {
     }
 
     cameraPreviewWindow->hide();
+    cameraPreviewWindowMonitorNumber = -1;
 }
 
 void MainWindow::handleCameraFeedStopped() {
