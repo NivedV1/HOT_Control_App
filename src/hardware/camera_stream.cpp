@@ -41,7 +41,20 @@ bool CameraStream::start(const QString &bindIpAddr, quint16 port) {
     frameDataBytes = 0;
 
     running.store(true);
+    {
+        std::lock_guard<std::mutex> lock(startupMutex);
+        startupComplete = false;
+        startupSucceeded = false;
+    }
     receiveThread = std::thread(&CameraStream::receiveLoop, this);
+
+    std::unique_lock<std::mutex> lock(startupMutex);
+    startupCv.wait(lock, [this]() { return startupComplete; });
+    if (!startupSucceeded) {
+        lock.unlock();
+        stop();
+        return false;
+    }
     return true;
 }
 
@@ -155,12 +168,24 @@ void CameraStream::receiveLoop() {
 #ifndef _WIN32
     queueStatusMessage("UDP Stream error: this receiver is currently implemented for Windows builds.");
     running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(startupMutex);
+        startupSucceeded = false;
+        startupComplete = true;
+    }
+    startupCv.notify_all();
     return;
 #else
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         queueStatusMessage("UDP Stream error: WSAStartup failed.");
         running.store(false);
+        {
+            std::lock_guard<std::mutex> lock(startupMutex);
+            startupSucceeded = false;
+            startupComplete = true;
+        }
+        startupCv.notify_all();
         return;
     }
 
@@ -169,11 +194,19 @@ void CameraStream::receiveLoop() {
         queueStatusMessage("UDP Stream error: failed to create UDP socket.");
         WSACleanup();
         running.store(false);
+        {
+            std::lock_guard<std::mutex> lock(startupMutex);
+            startupSucceeded = false;
+            startupComplete = true;
+        }
+        startupCv.notify_all();
         return;
     }
 
     int rcvBufSize = 5 * 1024 * 1024;
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char *>(&rcvBufSize), sizeof(rcvBufSize));
+    BOOL reuseAddr = TRUE;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuseAddr), sizeof(reuseAddr));
 
     DWORD timeoutMs = 500;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&timeoutMs), sizeof(timeoutMs));
@@ -192,21 +225,41 @@ void CameraStream::receiveLoop() {
             closesocket(sock);
             WSACleanup();
             running.store(false);
+            {
+                std::lock_guard<std::mutex> lock(startupMutex);
+                startupSucceeded = false;
+                startupComplete = true;
+            }
+            startupCv.notify_all();
             return;
         }
     }
 
     if (::bind(sock, reinterpret_cast<sockaddr *>(&recvAddr), sizeof(recvAddr)) == SOCKET_ERROR) {
+        const int err = WSAGetLastError();
         queueStatusMessage(
-            QString("UDP Stream error: bind failed on %1:%2.")
+            QString("UDP Stream error: bind failed on %1:%2 (WSA %3).")
                 .arg(bindIp)
-                .arg(bindPort));
+                .arg(bindPort)
+                .arg(err));
         closesocket(sock);
         WSACleanup();
         running.store(false);
+        {
+            std::lock_guard<std::mutex> lock(startupMutex);
+            startupSucceeded = false;
+            startupComplete = true;
+        }
+        startupCv.notify_all();
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(startupMutex);
+        startupSucceeded = true;
+        startupComplete = true;
+    }
+    startupCv.notify_all();
     queueStatusMessage(QString("Listening for UDP stream on %1:%2.").arg(bindIp).arg(bindPort));
 
     constexpr int kMaxPacket = 4096;

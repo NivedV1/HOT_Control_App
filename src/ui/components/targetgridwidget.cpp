@@ -12,6 +12,47 @@
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <QTransform>
+#include <cmath>
+
+namespace {
+double chooseGridSpacing(double minSceneSpacing) {
+    if (!(minSceneSpacing > 0.0) || !std::isfinite(minSceneSpacing)) {
+        return 50.0;
+    }
+
+    const double exponent = std::floor(std::log10(minSceneSpacing));
+    const double base = std::pow(10.0, exponent);
+    const double normalized = minSceneSpacing / base;
+
+    if (normalized <= 1.0) {
+        return 1.0 * base;
+    }
+    if (normalized <= 2.0) {
+        return 2.0 * base;
+    }
+    if (normalized <= 5.0) {
+        return 5.0 * base;
+    }
+    return 10.0 * base;
+}
+
+int firstGridLine(double start, double spacing) {
+    return static_cast<int>(std::floor(start / spacing) * spacing);
+}
+
+double ensureMaxGridLines(double spacing, double extent, int maxLines) {
+    if (!(spacing > 0.0) || !(extent > 0.0) || maxLines <= 0) {
+        return spacing;
+    }
+
+    const double estimatedLines = extent / spacing;
+    if (estimatedLines <= static_cast<double>(maxLines)) {
+        return spacing;
+    }
+
+    return chooseGridSpacing(extent / static_cast<double>(maxLines));
+}
+}
 
 // Static constants
 const double GridPoint::POINT_RADIUS = 5.0;
@@ -37,7 +78,6 @@ QRectF GridPoint::boundingRect() const {
                            -POINT_RADIUS - kPointPad,
                            2.0 * (POINT_RADIUS + kPointPad),
                            2.0 * (POINT_RADIUS + kPointPad));
-    // Label is drawn with a local Y counter-flip and ends up below the point in item coordinates.
     const QRectF labelRect(-kLabelWidth / 2.0,
                            POINT_RADIUS + kLabelVisualOffset,
                            kLabelWidth,
@@ -63,13 +103,9 @@ void GridPoint::paint(QPainter *painter, const QStyleOptionGraphicsItem *option,
     QColor labelColor = selected ? QColor(0, 255, 0) : QColor(100, 150, 255);
     labelColor.setAlpha(selected ? 255 : 102); // 102/255 ~= 40%
     painter->setPen(QPen(labelColor));
-    painter->save();
-    // The view uses a flipped Y axis; counter-flip so label text is upright.
-    painter->scale(1.0, -1.0);
     painter->drawText(QRectF(-12.0, -(POINT_RADIUS + 28.0), 24.0, 16.0),
                       Qt::AlignCenter,
                       QString::number(pointId));
-    painter->restore();
 }
 
 void GridPoint::mousePressEvent(QGraphicsSceneMouseEvent *event) {
@@ -99,13 +135,14 @@ void GridPoint::mouseReleaseEvent(QGraphicsSceneMouseEvent *event) {
 
 TargetGridWidget::TargetGridWidget(int cameraWidth, int cameraHeight, QWidget *parent)
     : QGraphicsView(parent), cameraWidth(cameraWidth), cameraHeight(cameraHeight),
-      nextPointId(1), selectedPoint(nullptr), imageItem(nullptr), imageMode(false), isDarkMode(true) {
+      nextPointId(1), selectedPoint(nullptr), imageItem(nullptr),
+      currentDisplayMode(DisplayMode::GridOnly), isDarkMode(true) {
 
     // Initialize with dark mode colors
     updateThemeColors();
 
-    // Create scene with centered Cartesian coordinate system
-    // (0,0) at center, X increases right, Y increases up (four quadrants)
+    // Create a scene centered on the camera frame. The rendered view stays upright;
+    // logical target coordinates convert Y separately so the UI still reports Cartesian values.
     double halfWidth = cameraWidth / 2.0;
     double halfHeight = cameraHeight / 2.0;
     gridScene = new QGraphicsScene(this);
@@ -117,6 +154,7 @@ TargetGridWidget::TargetGridWidget(int cameraWidth, int cameraHeight, QWidget *p
     imageItem->setOffset(-halfWidth, -halfHeight);
     imageItem->setVisible(false);
     imageItem->setZValue(-1.0);
+    imageItem->setAcceptedMouseButtons(Qt::NoButton);
     gridScene->addItem(imageItem);
 
     // Set rendering hints
@@ -125,6 +163,11 @@ TargetGridWidget::TargetGridWidget(int cameraWidth, int cameraHeight, QWidget *p
 
     // Set view properties
     setDragMode(QGraphicsView::ScrollHandDrag);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setTransformationAnchor(QGraphicsView::NoAnchor);
+    setResizeAnchor(QGraphicsView::NoAnchor);
+    setAlignment(Qt::AlignCenter);
     // Styling is now handled by the QSS theme files (light_theme.qss and theme.qss)
 
     // Enable focus
@@ -140,22 +183,26 @@ TargetGridWidget::~TargetGridWidget() {
 }
 
 void TargetGridWidget::addPoint(QPointF pixelCoords) {
-    // pixelCoords are in centered Cartesian coordinate system from screenToPixel
+    addPoint(pixelCoords, nextPointId);
+}
+
+void TargetGridWidget::addPoint(QPointF pixelCoords, int pointId) {
+    // pixelCoords are logical centered coordinates with +Y upward.
     // Clamp coordinates to camera grid bounds: -width/2 to +width/2, -height/2 to +height/2
     double halfWidth = cameraWidth / 2.0;
     double halfHeight = cameraHeight / 2.0;
     pixelCoords.setX(qBound(-halfWidth, pixelCoords.x(), halfWidth));
     pixelCoords.setY(qBound(-halfHeight, pixelCoords.y(), halfHeight));
 
-    GridPoint *point = new GridPoint(pixelCoords, nextPointId);
-    point->setPos(pixelCoords);
+    GridPoint *point = new GridPoint(pixelCoords, pointId);
+    point->setPos(pixelToScene(pixelCoords));
 
     gridScene->addItem(point);
     gridPoints.append(point);
 
-    emit pointAdded(nextPointId, pixelCoords);
+    emit pointAdded(pointId, pixelCoords);
 
-    nextPointId++;
+    nextPointId = qMax(nextPointId, pointId + 1);
 }
 
 void TargetGridWidget::removePoint(int pointId) {
@@ -199,6 +246,78 @@ void TargetGridWidget::clearAllPoints() {
     nextPointId = 1;
 }
 
+bool TargetGridWidget::hasPoint(int pointId) const {
+    for (const GridPoint *point : gridPoints) {
+        if (point && point->getPointId() == pointId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TargetGridWidget::selectPoint(int pointId) {
+    GridPoint *targetPoint = nullptr;
+    for (GridPoint *point : gridPoints) {
+        if (point && point->getPointId() == pointId) {
+            targetPoint = point;
+            break;
+        }
+    }
+
+    if (!targetPoint) {
+        return false;
+    }
+
+    if (selectedPoint == targetPoint && targetPoint->isSelected()) {
+        return true;
+    }
+
+    for (GridPoint *point : gridPoints) {
+        if (point) {
+            point->setSelected(point == targetPoint);
+        }
+    }
+
+    selectedPoint = targetPoint;
+    pointDragActive = false;
+    emit pointSelected(pointId);
+    return true;
+}
+
+bool TargetGridWidget::movePointById(int pointId, int deltaX, int deltaY) {
+    for (GridPoint *point : gridPoints) {
+        if (!point || point->getPointId() != pointId) {
+            continue;
+        }
+
+        QPointF currentPixel = point->getPixelCoordinates();
+        QPointF newPixel(currentPixel.x() + deltaX, currentPixel.y() + deltaY);
+
+        const double halfWidth = cameraWidth / 2.0;
+        const double halfHeight = cameraHeight / 2.0;
+        newPixel.setX(qBound(-halfWidth, newPixel.x(), halfWidth));
+        newPixel.setY(qBound(-halfHeight, newPixel.y(), halfHeight));
+
+        if (newPixel == currentPixel) {
+            if (selectedPoint != point || !point->isSelected()) {
+                selectPoint(pointId);
+            }
+            return true;
+        }
+
+        if (selectedPoint != point || !point->isSelected()) {
+            selectPoint(pointId);
+        }
+
+        point->setPixelCoordinates(newPixel);
+        point->setPos(pixelToScene(newPixel));
+        emit pointMoved(pointId, newPixel);
+        return true;
+    }
+
+    return false;
+}
+
 bool TargetGridWidget::setPointCoordinates(int pointId, const QPointF &pixelCoords) {
     const double halfWidth = cameraWidth / 2.0;
     const double halfHeight = cameraHeight / 2.0;
@@ -209,7 +328,7 @@ bool TargetGridWidget::setPointCoordinates(int pointId, const QPointF &pixelCoor
     for (GridPoint *point : gridPoints) {
         if (point && point->getPointId() == pointId) {
             point->setPixelCoordinates(clamped);
-            point->setPos(clamped);
+            point->setPos(pixelToScene(clamped));
             return true;
         }
     }
@@ -226,43 +345,36 @@ QVector<QPair<int, QPointF>> TargetGridWidget::getAllPoints() const {
 }
 
 void TargetGridWidget::setGridResolution(int cameraWidth, int cameraHeight) {
+    if (cameraWidth <= 0 || cameraHeight <= 0) {
+        return;
+    }
+
+    if (this->cameraWidth == cameraWidth && this->cameraHeight == cameraHeight) {
+        updateBackgroundPixmap();
+        return;
+    }
+
     this->cameraWidth = cameraWidth;
     this->cameraHeight = cameraHeight;
     double halfWidth = cameraWidth / 2.0;
     double halfHeight = cameraHeight / 2.0;
     gridScene->setSceneRect(-halfWidth, -halfHeight, cameraWidth, cameraHeight);
 
-    // Keep the background image aligned to the camera-sized scene rect.
-    if (imageItem) {
-        imageItem->setOffset(-halfWidth, -halfHeight);
+    for (GridPoint *point : gridPoints) {
+        if (!point) {
+            continue;
+        }
+
+        QPointF clamped = point->getPixelCoordinates();
+        clamped.setX(qBound(-halfWidth, clamped.x(), halfWidth));
+        clamped.setY(qBound(-halfHeight, clamped.y(), halfHeight));
+        point->setPixelCoordinates(clamped);
+        point->setPos(pixelToScene(clamped));
     }
 
-    if (!backgroundImage.isNull()) {
-        QImage resized = backgroundImage.convertToFormat(QImage::Format_Grayscale8).scaled(
-            cameraWidth, cameraHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        backgroundImage = resized;
-        imageItem->setPixmap(QPixmap::fromImage(resized));
-    }
+    updateBackgroundPixmap();
 
     fitGridToView();
-}
-
-void TargetGridWidget::moveSelectedPoint(int deltaX, int deltaY) {
-    if (!selectedPoint) return;
-
-    QPointF currentPixel = selectedPoint->getPixelCoordinates();
-    QPointF newPixel(currentPixel.x() + deltaX, currentPixel.y() + deltaY);
-
-    // Clamp to camera grid bounds: -width/2 to +width/2, -height/2 to +height/2
-    double halfWidth = cameraWidth / 2.0;
-    double halfHeight = cameraHeight / 2.0;
-    newPixel.setX(qBound(-halfWidth, newPixel.x(), halfWidth));
-    newPixel.setY(qBound(-halfHeight, newPixel.y(), halfHeight));
-
-    selectedPoint->setPixelCoordinates(newPixel);
-    selectedPoint->setPos(newPixel);
-
-    emit pointMoved(selectedPoint->getPointId(), newPixel);
 }
 
 void TargetGridWidget::setBackgroundImage(const QImage &imgGrayCameraSized) {
@@ -270,11 +382,13 @@ void TargetGridWidget::setBackgroundImage(const QImage &imgGrayCameraSized) {
         return;
     }
 
-    backgroundImage = imgGrayCameraSized.convertToFormat(QImage::Format_Grayscale8).scaled(
-        cameraWidth, cameraHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    if (imgGrayCameraSized.isNull()) {
+        clearBackgroundImage();
+        return;
+    }
 
-    imageItem->setPixmap(QPixmap::fromImage(backgroundImage));
-    imageItem->setVisible(imageMode && !backgroundImage.isNull());
+    backgroundImage = imgGrayCameraSized;
+    updateBackgroundPixmap();
     scene()->update();
 }
 
@@ -282,27 +396,56 @@ void TargetGridWidget::clearBackgroundImage() {
     backgroundImage = QImage();
     if (imageItem) {
         imageItem->setPixmap(QPixmap());
+        imageItem->setOffset(-cameraWidth / 2.0, -cameraHeight / 2.0);
         imageItem->setVisible(false);
     }
     scene()->update();
 }
 
-void TargetGridWidget::setImageMode(bool enabled) {
-    imageMode = enabled;
+void TargetGridWidget::setDisplayMode(DisplayMode mode) {
+    currentDisplayMode = mode;
 
-    if (imageMode) {
+    if (!isInteractiveDisplayMode()) {
         deselectAllPoints();
     }
 
     for (GridPoint *point : gridPoints) {
-        point->setVisible(!imageMode);
+        point->setVisible(currentDisplayMode != DisplayMode::StaticImage);
     }
 
     if (imageItem) {
-        imageItem->setVisible(imageMode && !backgroundImage.isNull());
+        imageItem->setVisible(currentDisplayMode != DisplayMode::GridOnly && !backgroundImage.isNull());
     }
 
     scene()->update();
+}
+
+bool TargetGridWidget::isInteractiveDisplayMode() const {
+    return currentDisplayMode != DisplayMode::StaticImage;
+}
+
+void TargetGridWidget::updateBackgroundPixmap() {
+    if (!imageItem) {
+        return;
+    }
+
+    if (backgroundImage.isNull()) {
+        imageItem->setPixmap(QPixmap());
+        imageItem->setOffset(-cameraWidth / 2.0, -cameraHeight / 2.0);
+        imageItem->setVisible(false);
+        return;
+    }
+
+    const QImage grayscaleImage = backgroundImage.convertToFormat(QImage::Format_Grayscale8);
+    const QImage fittedImage = grayscaleImage.scaled(
+        cameraWidth,
+        cameraHeight,
+        Qt::KeepAspectRatio,
+        Qt::SmoothTransformation);
+
+    imageItem->setPixmap(QPixmap::fromImage(fittedImage));
+    imageItem->setOffset(-fittedImage.width() / 2.0, -fittedImage.height() / 2.0);
+    imageItem->setVisible(currentDisplayMode != DisplayMode::GridOnly);
 }
 
 void TargetGridWidget::deselectAllPoints() {
@@ -315,25 +458,52 @@ void TargetGridWidget::deselectAllPoints() {
 }
 
 QPointF TargetGridWidget::screenToPixel(QPointF screenPos) const {
-    return mapToScene(screenPos.toPoint());
+    return sceneToPixel(mapToScene(screenPos.toPoint()));
 }
 
 QPointF TargetGridWidget::pixelToScreen(QPointF pixelPos) const {
-    return mapFromScene(pixelPos);
+    return mapFromScene(pixelToScene(pixelPos));
+}
+
+QPointF TargetGridWidget::sceneToPixel(QPointF scenePos) const {
+    return QPointF(scenePos.x(), -scenePos.y());
+}
+
+QPointF TargetGridWidget::pixelToScene(QPointF pixelPos) const {
+    return QPointF(pixelPos.x(), -pixelPos.y());
 }
 
 void TargetGridWidget::fitGridToView() {
-    // Fit the camera grid to fully fill the viewport.
-    // Use a Y-flipped transform so +Y is visually up and -Y is down.
+    if (fitGridInProgress) {
+        return;
+    }
+
+    // Fit the camera grid to fully fill the viewport while keeping the rendered view upright.
     QRectF sceneRect = gridScene->sceneRect();
+    if (sceneRect.isEmpty() || viewport()->width() <= 0 || viewport()->height() <= 0) {
+        return;
+    }
 
     // Calculate independent scale factors for full fill (no letterboxing).
     double scaleX = viewport()->width() / sceneRect.width();
     double scaleY = viewport()->height() / sceneRect.height();
 
-    // Apply non-uniform scaling and invert Y.
-    setTransform(QTransform::fromScale(scaleX, -scaleY));
+    const QTransform current = transform();
+    const bool sameScale =
+        std::abs(current.m11() - scaleX) < 1e-6 &&
+        std::abs(current.m22() - scaleY) < 1e-6 &&
+        std::abs(current.m12()) < 1e-6 &&
+        std::abs(current.m21()) < 1e-6;
+
+    if (sameScale) {
+        return;
+    }
+
+    // Apply non-uniform scaling without flipping the rendered image.
+    fitGridInProgress = true;
+    setTransform(QTransform::fromScale(scaleX, scaleY), false);
     centerOn(0, 0); // Center on the origin
+    fitGridInProgress = false;
 }
 
 void TargetGridWidget::centerView() {
@@ -342,17 +512,24 @@ void TargetGridWidget::centerView() {
 }
 
 void TargetGridWidget::mousePressEvent(QMouseEvent *event) {
-    if (imageMode) {
+    if (!isInteractiveDisplayMode()) {
         QGraphicsView::mousePressEvent(event);
         return;
     }
 
     if (event->button() == Qt::LeftButton) {
-        QPointF scenePos = mapToScene(event->pos());
-        QGraphicsItem *item = gridScene->itemAt(scenePos, QTransform());
+        const QPointF scenePos = mapToScene(event->pos());
+        GridPoint *clickedPoint = nullptr;
+        const QList<QGraphicsItem *> itemsAtCursor = gridScene->items(scenePos, Qt::IntersectsItemShape, Qt::DescendingOrder, QTransform());
+        for (QGraphicsItem *item : itemsAtCursor) {
+            if (GridPoint *point = dynamic_cast<GridPoint *>(item)) {
+                clickedPoint = point;
+                break;
+            }
+        }
 
         // If no item clicked, create new point
-        if (!item) {
+        if (!clickedPoint) {
             pointDragActive = false;
             QPointF pixelCoords = screenToPixel(event->pos());
             addPoint(pixelCoords);
@@ -360,17 +537,15 @@ void TargetGridWidget::mousePressEvent(QMouseEvent *event) {
             return;
         }
 
-        if (GridPoint *point = dynamic_cast<GridPoint*>(item)) {
-            deselectAllPoints();
-            point->setSelected(true);
-            selectedPoint = point;
-            emit pointSelected(point->getPointId());
+        deselectAllPoints();
+        clickedPoint->setSelected(true);
+        selectedPoint = clickedPoint;
+        emit pointSelected(clickedPoint->getPointId());
 
-            pointDragActive = true;
-            pointDragOffset = selectedPoint->pos() - scenePos;
-            event->accept();
-            return;
-        }
+        pointDragActive = true;
+        pointDragOffset = selectedPoint->getPixelCoordinates() - sceneToPixel(scenePos);
+        event->accept();
+        return;
     }
 
     pointDragActive = false;
@@ -378,7 +553,7 @@ void TargetGridWidget::mousePressEvent(QMouseEvent *event) {
 }
 
 void TargetGridWidget::mouseMoveEvent(QMouseEvent *event) {
-    if (imageMode || !pointDragActive || !selectedPoint || !(event->buttons() & Qt::LeftButton)) {
+    if (!isInteractiveDisplayMode() || !pointDragActive || !selectedPoint || !(event->buttons() & Qt::LeftButton)) {
         QGraphicsView::mouseMoveEvent(event);
         return;
     }
@@ -393,7 +568,7 @@ void TargetGridWidget::mouseMoveEvent(QMouseEvent *event) {
 
     if (selectedPoint->getPixelCoordinates() != newPixel) {
         selectedPoint->setPixelCoordinates(newPixel);
-        selectedPoint->setPos(newPixel);
+        selectedPoint->setPos(pixelToScene(newPixel));
         emit pointMoved(selectedPoint->getPointId(), newPixel);
     }
 
@@ -410,76 +585,7 @@ void TargetGridWidget::mouseReleaseEvent(QMouseEvent *event) {
     QGraphicsView::mouseReleaseEvent(event);
 }
 
-bool TargetGridWidget::removeLastCreatedPoint() {
-    int lastPointId = -1;
-    for (const GridPoint *point : gridPoints) {
-        if (point->getPointId() > lastPointId) {
-            lastPointId = point->getPointId();
-        }
-    }
-
-    if (lastPointId < 0) {
-        return false;
-    }
-
-    removePoint(lastPointId);
-    return true;
-}
-
 void TargetGridWidget::keyPressEvent(QKeyEvent *event) {
-    if (imageMode) {
-        QGraphicsView::keyPressEvent(event);
-        return;
-    }
-
-    const int delta = (event->modifiers() & Qt::ShiftModifier) ? 5 : 1;
-
-    switch (event->key()) {
-        case Qt::Key_Up:
-            if (selectedPoint) {
-                moveSelectedPoint(0, delta);
-                event->accept();
-                return;
-            }
-            break;
-        case Qt::Key_Down:
-            if (selectedPoint) {
-                moveSelectedPoint(0, -delta);
-                event->accept();
-                return;
-            }
-            break;
-        case Qt::Key_Left:
-            if (selectedPoint) {
-                moveSelectedPoint(-delta, 0);
-                event->accept();
-                return;
-            }
-            break;
-        case Qt::Key_Right:
-            if (selectedPoint) {
-                moveSelectedPoint(delta, 0);
-                event->accept();
-                return;
-            }
-            break;
-        case Qt::Key_Delete:
-            if (selectedPoint) {
-                removePoint(selectedPoint->getPointId());
-                event->accept();
-                return;
-            }
-            break;
-        case Qt::Key_Backspace:
-            if (removeLastCreatedPoint()) {
-                event->accept();
-                return;
-            }
-            break;
-        default:
-            break;
-    }
-
     QGraphicsView::keyPressEvent(event);
 }
 
@@ -502,133 +608,141 @@ void TargetGridWidget::showEvent(QShowEvent *event) {
 }
 
 void TargetGridWidget::drawBackground(QPainter *painter, const QRectF &rect) {
-    if (imageMode) {
+    const bool hasImageBackground = currentDisplayMode != DisplayMode::GridOnly && !backgroundImage.isNull();
+
+    // Draw background
+    if (!hasImageBackground) {
+        painter->fillRect(rect, bgColor);
+    } else {
         painter->fillRect(rect, Qt::black);
+    }
+
+    if (!hasImageBackground && currentDisplayMode != DisplayMode::StaticImage) {
+        drawGridOverlay(painter, rect, false);
+    }
+}
+
+void TargetGridWidget::drawForeground(QPainter *painter, const QRectF &rect) {
+    if (currentDisplayMode == DisplayMode::LiveCamera) {
+        drawGridOverlay(painter, rect, true);
+    }
+    QGraphicsView::drawForeground(painter, rect);
+}
+
+void TargetGridWidget::drawGridOverlay(QPainter *painter, const QRectF &rect, bool hasImageBackground) const {
+    const bool overlayGrid = currentDisplayMode != DisplayMode::StaticImage;
+    if (!overlayGrid) {
         return;
     }
 
-    // Draw background
-    painter->fillRect(rect, bgColor);
-
     double halfWidth = cameraWidth / 2.0;
     double halfHeight = cameraHeight / 2.0;
-
-    // Show full grid with appropriate spacing for camera resolution
-    int majorGridSpacing = 200;  // Major lines every 200 pixels
-    int minorGridSpacing = 50;   // Minor lines every 50 pixels
-
-    // Draw minor grid lines (finer grid)
-    painter->setPen(QPen(minorGridColor, 0.3));
-    for (int x = -static_cast<int>(halfWidth); x <= static_cast<int>(halfWidth); x += minorGridSpacing) {
-        painter->drawLine(QLineF(x, rect.top(), x, rect.bottom()));
-    }
-    for (int y = -static_cast<int>(halfHeight); y <= static_cast<int>(halfHeight); y += minorGridSpacing) {
-        painter->drawLine(QLineF(rect.left(), y, rect.right(), y));
+    const QRectF sceneBounds(-halfWidth, -halfHeight, cameraWidth, cameraHeight);
+    const QRectF visibleRect = rect.intersected(sceneBounds);
+    if (visibleRect.isEmpty()) {
+        return;
     }
 
-    // Draw major grid lines (coarser grid)
-    painter->setPen(QPen(majorGridColor, 0.8));
-    for (int x = -static_cast<int>(halfWidth); x <= static_cast<int>(halfWidth); x += majorGridSpacing) {
-        painter->drawLine(QLineF(x, rect.top(), x, rect.bottom()));
+    const double scaleX = std::abs(transform().m11());
+    const double scaleY = std::abs(transform().m22());
+    const double safeScaleX = scaleX > 1e-6 ? scaleX : 1.0;
+    const double safeScaleY = scaleY > 1e-6 ? scaleY : 1.0;
+    const double minorSpacingX = chooseGridSpacing(36.0 / safeScaleX);
+    const double minorSpacingY = chooseGridSpacing(36.0 / safeScaleY);
+    constexpr int kMaxMinorLinesPerAxis = 160;
+    constexpr int kMaxMajorLinesPerAxis = 60;
+    const double boundedMinorSpacingX = ensureMaxGridLines(minorSpacingX, visibleRect.width(), kMaxMinorLinesPerAxis);
+    const double boundedMinorSpacingY = ensureMaxGridLines(minorSpacingY, visibleRect.height(), kMaxMinorLinesPerAxis);
+    const double majorSpacingX = ensureMaxGridLines(boundedMinorSpacingX * 4.0, visibleRect.width(), kMaxMajorLinesPerAxis);
+    const double majorSpacingY = ensureMaxGridLines(boundedMinorSpacingY * 4.0, visibleRect.height(), kMaxMajorLinesPerAxis);
+
+    QColor minorColor = minorGridColor;
+    QColor majorColor = majorGridColor;
+    QColor localAxisColor = axisColor;
+    QColor localCenterColor = centerPointColor;
+    QColor localBorderColor = borderColor;
+    QColor localTextColor = textColor;
+    QColor axisLabelColor = isDarkMode ? QColor(120, 180, 255) : QColor(70, 130, 180);
+
+    if (hasImageBackground) {
+        minorColor.setAlpha(isDarkMode ? 75 : 85);
+        majorColor.setAlpha(isDarkMode ? 125 : 145);
+        localAxisColor.setAlpha(205);
+        localCenterColor.setAlpha(230);
+        localBorderColor.setAlpha(185);
+        localTextColor = QColor(240, 240, 240, 220);
+        axisLabelColor = QColor(195, 225, 255, 230);
     }
-    for (int y = -static_cast<int>(halfHeight); y <= static_cast<int>(halfHeight); y += majorGridSpacing) {
-        painter->drawLine(QLineF(rect.left(), y, rect.right(), y));
+
+    painter->setPen(QPen(minorColor, 0.3));
+    for (double x = firstGridLine(visibleRect.left(), boundedMinorSpacingX); x <= visibleRect.right(); x += boundedMinorSpacingX) {
+        if (x < sceneBounds.left() || x > sceneBounds.right()) {
+            continue;
+        }
+        painter->drawLine(QLineF(x, visibleRect.top(), x, visibleRect.bottom()));
+    }
+    for (double y = firstGridLine(visibleRect.top(), boundedMinorSpacingY); y <= visibleRect.bottom(); y += boundedMinorSpacingY) {
+        if (y < sceneBounds.top() || y > sceneBounds.bottom()) {
+            continue;
+        }
+        painter->drawLine(QLineF(visibleRect.left(), y, visibleRect.right(), y));
     }
 
-    // Draw X and Y axes (centered Cartesian coordinate system)
-    painter->setPen(QPen(axisColor, 1.0));
-    painter->drawLine(QLineF(-halfWidth, 0, halfWidth, 0));  // X axis through center
-    painter->drawLine(QLineF(0, -halfHeight, 0, halfHeight));  // Y axis through center
-
-    // Draw origin point (0,0) at center
-    painter->setPen(QPen(centerPointColor, 2.0));
-    painter->drawEllipse(QPointF(0, 0), 3, 3);
-
-    // Draw border
-    painter->setPen(QPen(borderColor, 1.5));
-    painter->drawRect(-halfWidth, -halfHeight, cameraWidth, cameraHeight);
-
-    // Draw corner labels with Cartesian coordinates (four quadrants)
-    auto drawUprightText = [&](const QRectF &sceneTextRect, int flags, const QString &text, const QFont &font) {
-        const QPoint viewTopLeft = mapFromScene(sceneTextRect.topLeft());
-        const QPoint viewBottomRight = mapFromScene(sceneTextRect.bottomRight());
-        QRect viewRect(viewTopLeft, viewBottomRight);
-        viewRect = viewRect.normalized();
-
-        painter->save();
-        painter->resetTransform();
-        painter->setPen(QPen(textColor));
-        painter->setFont(font);
-        painter->drawText(viewRect, flags, text);
-        painter->restore();
-    };
-
-    int halfWidthInt = static_cast<int>(halfWidth);
-    int halfHeightInt = static_cast<int>(halfHeight);
-
-    // Top-left corner (Q2: negative X, positive Y)
-    drawUprightText(
-        QRectF(-halfWidthInt + 5, halfHeightInt - 20, 60, 20),
-        Qt::AlignLeft | Qt::AlignTop,
-        QString("(-%1, %2)").arg(halfWidthInt).arg(halfHeightInt),
-        QFont("Arial", 9, QFont::Bold));
-
-    // Top-right corner (Q1: positive X, positive Y)
-    drawUprightText(
-        QRectF(halfWidthInt - 65, halfHeightInt - 20, 60, 20),
-        Qt::AlignRight | Qt::AlignTop,
-        QString("(%1, %2)").arg(halfWidthInt).arg(halfHeightInt),
-        QFont("Arial", 9, QFont::Bold));
-
-    // Bottom-left corner (Q3: negative X, negative Y)
-    drawUprightText(
-        QRectF(-halfWidthInt + 5, -halfHeightInt + 5, 60, 20),
-        Qt::AlignLeft | Qt::AlignBottom,
-        QString("(-%1, -%2)").arg(halfWidthInt).arg(halfHeightInt),
-        QFont("Arial", 9, QFont::Bold));
-
-    // Bottom-right corner (Q4: positive X, negative Y)
-    drawUprightText(
-        QRectF(halfWidthInt - 65, -halfHeightInt + 5, 60, 20),
-        Qt::AlignRight | Qt::AlignBottom,
-        QString("(%1, -%2)").arg(halfWidthInt).arg(halfHeightInt),
-        QFont("Arial", 9, QFont::Bold));
-
-    // Origin label
-    drawUprightText(
-        QRectF(-20, -15, 40, 20),
-        Qt::AlignCenter,
-        "(0, 0)",
-        QFont("Arial", 8));
-
-    // Draw axis labels
-    const QColor axisLabelColor = isDarkMode ? QColor(120, 180, 255) : QColor(70, 130, 180);
-    // X-axis label at right
-    {
-        const QPoint viewTopLeft = mapFromScene(QPointF(halfWidthInt - 20, 8));
-        const QPoint viewBottomRight = mapFromScene(QPointF(halfWidthInt, 24));
-        QRect viewRect(viewTopLeft, viewBottomRight);
-        viewRect = viewRect.normalized();
-        painter->save();
-        painter->resetTransform();
-        painter->setPen(QPen(axisLabelColor));
-        painter->setFont(QFont("Arial", 8));
-        painter->drawText(viewRect, Qt::AlignCenter, "X");
-        painter->restore();
+    painter->setPen(QPen(majorColor, 0.8));
+    for (double x = firstGridLine(visibleRect.left(), majorSpacingX); x <= visibleRect.right(); x += majorSpacingX) {
+        if (x < sceneBounds.left() || x > sceneBounds.right()) {
+            continue;
+        }
+        painter->drawLine(QLineF(x, visibleRect.top(), x, visibleRect.bottom()));
     }
-    // Y-axis label at top
-    {
-        const QPoint viewTopLeft = mapFromScene(QPointF(5, halfHeightInt - 15));
-        const QPoint viewBottomRight = mapFromScene(QPointF(25, halfHeightInt + 1));
-        QRect viewRect(viewTopLeft, viewBottomRight);
-        viewRect = viewRect.normalized();
-        painter->save();
-        painter->resetTransform();
-        painter->setPen(QPen(axisLabelColor));
-        painter->setFont(QFont("Arial", 8));
-        painter->drawText(viewRect, Qt::AlignCenter, "Y");
-        painter->restore();
+    for (double y = firstGridLine(visibleRect.top(), majorSpacingY); y <= visibleRect.bottom(); y += majorSpacingY) {
+        if (y < sceneBounds.top() || y > sceneBounds.bottom()) {
+            continue;
+        }
+        painter->drawLine(QLineF(visibleRect.left(), y, visibleRect.right(), y));
     }
+
+    painter->setPen(QPen(localAxisColor, 1.0));
+    if (visibleRect.top() <= 0.0 && visibleRect.bottom() >= 0.0) {
+        painter->drawLine(QLineF(sceneBounds.left(), 0, sceneBounds.right(), 0));
+    }
+    if (visibleRect.left() <= 0.0 && visibleRect.right() >= 0.0) {
+        painter->drawLine(QLineF(0, sceneBounds.top(), 0, sceneBounds.bottom()));
+    }
+
+    if (visibleRect.contains(QPointF(0, 0))) {
+        painter->setPen(QPen(localCenterColor, 2.0));
+        painter->drawEllipse(QPointF(0, 0), 3, 3);
+    }
+
+    painter->setPen(QPen(localBorderColor, 1.5));
+    painter->drawRect(sceneBounds);
+
+    painter->save();
+    painter->resetTransform();
+    painter->setPen(QPen(localTextColor));
+    painter->setFont(QFont("Arial", 8, QFont::Bold));
+
+    const int halfWidthInt = static_cast<int>(halfWidth);
+    const int halfHeightInt = static_cast<int>(halfHeight);
+    const QRect viewRect = viewport()->rect().adjusted(6, 6, -6, -6);
+
+    painter->drawText(viewRect, Qt::AlignLeft | Qt::AlignTop,
+                      QString("(-%1, %2)").arg(halfWidthInt).arg(halfHeightInt));
+    painter->drawText(viewRect, Qt::AlignRight | Qt::AlignTop,
+                      QString("(%1, %2)").arg(halfWidthInt).arg(halfHeightInt));
+    painter->drawText(viewRect, Qt::AlignLeft | Qt::AlignBottom,
+                      QString("(-%1, -%2)").arg(halfWidthInt).arg(halfHeightInt));
+    painter->drawText(viewRect, Qt::AlignRight | Qt::AlignBottom,
+                      QString("(%1, -%2)").arg(halfWidthInt).arg(halfHeightInt));
+
+    painter->setFont(QFont("Arial", 8));
+    painter->drawText(viewRect, Qt::AlignCenter, "(0, 0)");
+
+    painter->setPen(QPen(axisLabelColor));
+    painter->drawText(QRect(viewRect.right() - 24, viewRect.center().y() - 10, 20, 20), Qt::AlignCenter, "X");
+    painter->drawText(QRect(viewRect.center().x() + 4, viewRect.top(), 20, 20), Qt::AlignCenter, "Y");
+    painter->restore();
 }
 
 void TargetGridWidget::updateGridDisplay() {

@@ -10,6 +10,62 @@
 #include <QSettings>
 #include <QCoreApplication>
 #include <QtMath>
+#include <QFileInfo>
+
+bool CameraManager::revertRecordButtonIfPossible() const {
+    QPushButton *btn = qobject_cast<QPushButton*>(sender());
+    if (!btn) {
+        return false;
+    }
+    const bool oldState = btn->blockSignals(true);
+    btn->setChecked(false);
+    btn->blockSignals(oldState);
+    return true;
+}
+
+bool CameraManager::openRecordingWriter(const QString &path,
+                                        bool saveCompressed,
+                                        const cv::Size &frameSize,
+                                        bool isColor,
+                                        const QString &sourceLabel) {
+    if (frameSize.width <= 0 || frameSize.height <= 0) {
+        emit statusMessage(sourceLabel + ": invalid frame size for recording.");
+        return false;
+    }
+
+    const QString suffix = QFileInfo(path).suffix().trimmed().toLower();
+    const bool uncompressed = !saveCompressed;
+    int codec = 0;
+
+    if (uncompressed) {
+        if (suffix != QStringLiteral("avi")) {
+            emit statusMessage(sourceLabel + ": uncompressed recording requires an AVI file.");
+            return false;
+        }
+        codec = cv::VideoWriter::fourcc('D', 'I', 'B', ' ');
+    } else if (suffix == QStringLiteral("mp4")) {
+        codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+    } else {
+        codec = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
+    }
+
+    if (cvVideoWriter.isOpened()) {
+        cvVideoWriter.release();
+    }
+
+    cvVideoWriter.open(path.toStdString(), codec, 30.0, frameSize, isColor);
+    if (!cvVideoWriter.isOpened() && uncompressed) {
+        cvVideoWriter.open(path.toStdString(), 0, 30.0, frameSize, isColor);
+    }
+
+    if (!cvVideoWriter.isOpened()) {
+        const QString modeLabel = uncompressed ? QStringLiteral("uncompressed") : QStringLiteral("compressed");
+        emit statusMessage(sourceLabel + ": failed to open " + modeLabel + " video writer.");
+        return false;
+    }
+
+    return true;
+}
 
 CameraManager::CameraManager(int engineBackend,
                              const QString &bindIp,
@@ -328,11 +384,12 @@ void CameraManager::toggleRecording(bool checked) {
         bool save_compressed = settings.value("Hardware/save_compressed", false).toBool();
         bool uncompressed = !save_compressed;
         
-        QString filter = uncompressed ? "AVI Video (*.avi);;MP4 Video (*.mp4)" 
+        QString filter = uncompressed ? "AVI Video (*.avi)"
                                       : "MP4 Video (*.mp4);;AVI Video (*.avi)";
         
         QString defaultName = "HOT_Video_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-        QString defaultPath = QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)).filePath(defaultName);
+        QString defaultPath = QDir(QStandardPaths::writableLocation(QStandardPaths::MoviesLocation))
+                                  .filePath(defaultName + (uncompressed ? ".avi" : ".mp4"));
         
         QString path = QFileDialog::getSaveFileName(nullptr, "Save Video", defaultPath, filter);
         
@@ -364,29 +421,17 @@ void CameraManager::toggleRecording(bool checked) {
 
         if (backend == CameraBackend::QtNative && qtCamera && qtCamera->isActive()) {
             if (lastUdpFrame.isNull()) {
-                QPushButton *btn = qobject_cast<QPushButton*>(sender());
-                if (btn) {
-                    bool oldState = btn->blockSignals(true);
-                    btn->setChecked(false);
-                    btn->blockSignals(oldState);
-                }
+                revertRecordButtonIfPossible();
                 emit statusMessage("Webcam: wait for first frame before recording.");
                 return;
             }
-            
-            save_compressed = settings.value("Hardware/save_compressed", false).toBool();
-            uncompressed = !save_compressed;
-            int codec = uncompressed ? 0 : cv::VideoWriter::fourcc('M','J','P','G');
-            
-            cvVideoWriter.open(path.toStdString(), codec, 30.0, getFinalSize(lastUdpFrame.width(), lastUdpFrame.height()));
-            if (!cvVideoWriter.isOpened()) {
-                QPushButton *btn = qobject_cast<QPushButton*>(sender());
-                if (btn) {
-                    bool oldState = btn->blockSignals(true);
-                    btn->setChecked(false);
-                    btn->blockSignals(oldState);
-                }
-                emit statusMessage("Webcam: failed to open video writer.");
+
+            if (!openRecordingWriter(path,
+                                     save_compressed,
+                                     getFinalSize(lastUdpFrame.width(), lastUdpFrame.height()),
+                                     true,
+                                     QStringLiteral("Webcam"))) {
+                revertRecordButtonIfPossible();
                 return;
             }
             isRecordingCV = true;
@@ -394,39 +439,30 @@ void CameraManager::toggleRecording(bool checked) {
         } else if (backend == CameraBackend::OpenCV && cvCapture.isOpened()) {
             int width = cvCapture.get(cv::CAP_PROP_FRAME_WIDTH);
             int height = cvCapture.get(cv::CAP_PROP_FRAME_HEIGHT);
-            
-            save_compressed = settings.value("Hardware/save_compressed", false).toBool();
-            uncompressed = !save_compressed;
-            int codec = uncompressed ? 0 : cv::VideoWriter::fourcc('M','J','P','G');
-            
-            cvVideoWriter.open(path.toStdString(), codec, 30.0, getFinalSize(width, height));
+
+            if (!openRecordingWriter(path,
+                                     save_compressed,
+                                     getFinalSize(width, height),
+                                     true,
+                                     QStringLiteral("OpenCV"))) {
+                revertRecordButtonIfPossible();
+                return;
+            }
             isRecordingCV = true;
             cvRecordStartTime = QDateTime::currentMSecsSinceEpoch();
         } else if (backend == CameraBackend::UdpStream) {
             if (lastUdpFrame.isNull()) {
-                QPushButton *btn = qobject_cast<QPushButton*>(sender());
-                if (btn) {
-                    bool oldState = btn->blockSignals(true);
-                    btn->setChecked(false);
-                    btn->blockSignals(oldState);
-                }
+                revertRecordButtonIfPossible();
                 emit statusMessage("UDP Stream: wait for first frame before recording.");
                 return;
             }
-            
-            save_compressed = settings.value("Hardware/save_compressed", false).toBool();
-            uncompressed = !save_compressed;
-            int codec = uncompressed ? 0 : cv::VideoWriter::fourcc('M','J','P','G');
-            
-            cvVideoWriter.open(path.toStdString(), codec, 30.0, getFinalSize(lastUdpFrame.width(), lastUdpFrame.height()));
-            if (!cvVideoWriter.isOpened()) {
-                QPushButton *btn = qobject_cast<QPushButton*>(sender());
-                if (btn) {
-                    bool oldState = btn->blockSignals(true);
-                    btn->setChecked(false);
-                    btn->blockSignals(oldState);
-                }
-                emit statusMessage("UDP Stream: failed to open video writer.");
+
+            if (!openRecordingWriter(path,
+                                     save_compressed,
+                                     getFinalSize(lastUdpFrame.width(), lastUdpFrame.height()),
+                                     false,
+                                     QStringLiteral("UDP Stream"))) {
+                revertRecordButtonIfPossible();
                 return;
             }
             isRecordingCV = true;
@@ -527,11 +563,10 @@ void CameraManager::onUdpFrameReceived(const QImage &frame, quint32 frameId) {
             toWrite = lastUdpFrame.transformed(trans, Qt::SmoothTransformation);
         }
         toWrite = applyZoomCrop(toWrite);
-        cv::Mat grayMat(toWrite.height(), toWrite.width(), CV_8UC1,
-                        const_cast<uchar *>(toWrite.constBits()), toWrite.bytesPerLine());
-        cv::Mat bgrMat;
-        cv::cvtColor(grayMat, bgrMat, cv::COLOR_GRAY2BGR);
-        cvVideoWriter.write(bgrMat);
+        QImage grayImage = toWrite.convertToFormat(QImage::Format_Grayscale8);
+        cv::Mat grayMat(grayImage.height(), grayImage.width(), CV_8UC1,
+                        const_cast<uchar *>(grayImage.constBits()), grayImage.bytesPerLine());
+        cvVideoWriter.write(grayMat);
         const qint64 duration = QDateTime::currentMSecsSinceEpoch() - cvRecordStartTime;
         onDurationChanged(duration);
     }

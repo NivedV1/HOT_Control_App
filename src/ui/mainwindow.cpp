@@ -57,10 +57,15 @@
 #include <QCursor>
 #include <QMouseEvent>
 #include <QEvent>
+#include <QAbstractSpinBox>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QtMath>
 
 namespace {
 constexpr int kImageTabIndex = 2;
+constexpr int kCameraTabIndex = 3;
 constexpr int kPythonTabIndex = 5;
 constexpr int kDefaultMonitorNumber = 2;
 constexpr int kDefaultCameraPreviewMonitorNumber = 1;
@@ -172,6 +177,28 @@ bool isStaticSequence(const QVector<QVector<QPointF>> &frames) {
         }
     }
     return true;
+}
+
+QPointF clampPointToCameraBounds(const QPointF &point, int camWidth, int camHeight) {
+    const double halfWidth = camWidth / 2.0;
+    const double halfHeight = camHeight / 2.0;
+
+    return QPointF(qBound(-halfWidth, point.x(), halfWidth),
+                   qBound(-halfHeight, point.y(), halfHeight));
+}
+
+bool isEditableInputWidget(const QWidget *widget) {
+    const QWidget *current = widget;
+    while (current) {
+        if (qobject_cast<const QLineEdit *>(current) ||
+            qobject_cast<const QAbstractSpinBox *>(current) ||
+            qobject_cast<const QPlainTextEdit *>(current) ||
+            qobject_cast<const QTextEdit *>(current)) {
+            return true;
+        }
+        current = current->parentWidget();
+    }
+    return false;
 }
 
 void appendGsRuntimeLogEntry(const QString &triggerLabel,
@@ -568,7 +595,27 @@ void MainWindow::createControls(QGridLayout *layout) {
     imageLayout->addStretch();
 
     targetModeTabs->addTab(imageTab, "Image");
-    targetModeTabs->addTab(new QWidget(), "Camera");
+
+    QWidget *cameraTab = new QWidget();
+    QVBoxLayout *cameraLayout = new QVBoxLayout(cameraTab);
+    QLabel *cameraTabHelp = new QLabel("Shows the latest live camera frame in the target area.");
+    cameraTabHelp->setWordWrap(true);
+    cameraTabHelp->setStyleSheet("font-size: 11px;");
+    cameraLayout->addWidget(cameraTabHelp);
+
+    QHBoxLayout *cameraTabButtons = new QHBoxLayout();
+    cameraTabAddPointsBtn = new QPushButton("Add Points");
+    cameraTabClearAllPointsBtn = new QPushButton("Clear All");
+    cameraTabButtons->addWidget(cameraTabAddPointsBtn);
+    cameraTabButtons->addWidget(cameraTabClearAllPointsBtn);
+    cameraLayout->addLayout(cameraTabButtons);
+
+    cameraTrapTable = new QTableWidget(0, 3);
+    cameraTrapTable->setHorizontalHeaderLabels({"No", "X", "Y"});
+    cameraTrapTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    cameraLayout->addWidget(cameraTrapTable);
+    cameraLayout->addStretch();
+    targetModeTabs->addTab(cameraTab, "Camera");
 
     animationTab = new QWidget();
     QVBoxLayout *animationTabLayout = new QVBoxLayout(animationTab);
@@ -900,8 +947,13 @@ void MainWindow::setupConnections() {
     connect(targetGridWidget, &TargetGridWidget::pointSelected, this, &MainWindow::onGridPointSelected);
     connect(targetGridWidget, &TargetGridWidget::pointDeselected, this, &MainWindow::onGridPointDeselected);
     connect(trapTable, &QTableWidget::itemChanged, this, &MainWindow::onTrapTableItemChanged);
+    connect(cameraTrapTable, &QTableWidget::itemChanged, this, &MainWindow::onTrapTableItemChanged);
     // Manual tab button connections
     connect(addPointsBtn, &QPushButton::clicked, this, [this]() {
+        targetGridWidget->addPoint(QPointF(0, 0));
+        targetGridWidget->setFocus();
+    });
+    connect(cameraTabAddPointsBtn, &QPushButton::clicked, this, [this]() {
         targetGridWidget->addPoint(QPointF(0, 0));
         targetGridWidget->setFocus();
     });
@@ -909,7 +961,18 @@ void MainWindow::setupConnections() {
     connect(clearAllPointsBtn, &QPushButton::clicked, this, [this]() {
         targetGridWidget->clearAllPoints();
         gridPointData.clear();
-        trapTable->setRowCount(0);
+        clearPointTables();
+        selectedPointId = -1;
+        lastGeneratedPatternSummary.clear();
+        lastGeneratedPatternDetails.clear();
+        if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
+            updateCameraFeed(lastCameraFrame);
+        }
+    });
+    connect(cameraTabClearAllPointsBtn, &QPushButton::clicked, this, [this]() {
+        targetGridWidget->clearAllPoints();
+        gridPointData.clear();
+        clearPointTables();
         selectedPointId = -1;
         lastGeneratedPatternSummary.clear();
         lastGeneratedPatternDetails.clear();
@@ -949,6 +1012,23 @@ void MainWindow::setupConnections() {
             cameraPreviewToggleBtn->setChecked(false);
         }
     });
+
+    auto addGlobalPointShortcut = [this](const QKeySequence &sequence, auto handler) {
+        QShortcut *shortcut = new QShortcut(sequence, this);
+        shortcut->setContext(Qt::ApplicationShortcut);
+        connect(shortcut, &QShortcut::activated, this, handler);
+    };
+
+    addGlobalPointShortcut(QKeySequence(Qt::Key_Up), [this]() { moveSelectedPointByKeyboard(0, 1); });
+    addGlobalPointShortcut(QKeySequence(Qt::Key_Down), [this]() { moveSelectedPointByKeyboard(0, -1); });
+    addGlobalPointShortcut(QKeySequence(Qt::Key_Left), [this]() { moveSelectedPointByKeyboard(-1, 0); });
+    addGlobalPointShortcut(QKeySequence(Qt::Key_Right), [this]() { moveSelectedPointByKeyboard(1, 0); });
+    addGlobalPointShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Up), [this]() { moveSelectedPointByKeyboard(0, 5); });
+    addGlobalPointShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Down), [this]() { moveSelectedPointByKeyboard(0, -5); });
+    addGlobalPointShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Left), [this]() { moveSelectedPointByKeyboard(-5, 0); });
+    addGlobalPointShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Right), [this]() { moveSelectedPointByKeyboard(5, 0); });
+    addGlobalPointShortcut(QKeySequence(Qt::Key_Delete), [this]() { removeSelectedPointByKeyboard(); });
+    addGlobalPointShortcut(QKeySequence(Qt::Key_Backspace), [this]() { removeLastCreatedPointByKeyboard(); });
 
     connect(camManager, &CameraManager::frameReady, this, [this](const QImage &image) {
         cameraFeedActive = true;
@@ -1047,6 +1127,7 @@ void MainWindow::openSettingsDialog() {
     auto applyFn = [&]() {
         const int prevSlmWidth = slmWidth;
         const int prevSlmHeight = slmHeight;
+        const QMap<int, QPointF> preservedGridPoints = gridPointData;
 
         slmWidth = dialog.getWidth();
         slmHeight = dialog.getHeight();
@@ -1126,7 +1207,16 @@ void MainWindow::openSettingsDialog() {
         // Update grid resolution dynamically
         targetGridWidget->setGridResolution(camWidth, camHeight);
         targetGridWidget->centerView();
+        suppressGridStatusMessages = true;
+        selectedPointId = -1;
+        updateGridHoverReadout(QPoint(), false);
+        gridPointData.clear();
+        clearPointTables();
         targetGridWidget->clearAllPoints();
+        for (auto it = preservedGridPoints.cbegin(); it != preservedGridPoints.cend(); ++it) {
+            targetGridWidget->addPoint(clampPointToCameraBounds(it.value(), camWidth, camHeight), it.key());
+        }
+        suppressGridStatusMessages = false;
         if (patternPresetsWidget) {
             patternPresetsWidget->setCameraResolution(camWidth, camHeight);
         }
@@ -1161,7 +1251,7 @@ void MainWindow::openSettingsDialog() {
 
             if (targetModeTabs && targetModeTabs->currentIndex() == kImageTabIndex) {
                 targetGridWidget->setBackgroundImage(loadedTargetImageGray);
-                targetGridWidget->setImageMode(true);
+                targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::StaticImage);
             }
         }
 
@@ -1671,6 +1761,183 @@ bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
     return true;
 }
 
+bool MainWindow::shouldHandleGlobalPointShortcut() const {
+    if (!isActiveWindow() || !targetGridWidget || selectedPointId < 0) {
+        return false;
+    }
+
+    QWidget *focusedWidget = QApplication::focusWidget();
+    if (!focusedWidget) {
+        return true;
+    }
+
+    if (focusedWidget->window() != this) {
+        return false;
+    }
+
+    return !isEditableInputWidget(focusedWidget);
+}
+
+void MainWindow::restoreSelectedPointSelection() {
+    if (!targetGridWidget || selectedPointId < 0) {
+        return;
+    }
+
+    if (!targetGridWidget->selectPoint(selectedPointId)) {
+        selectedPointId = -1;
+        updateGridHoverReadout(QPoint(), false);
+        return;
+    }
+
+    if (pointTables().isEmpty()) {
+        return;
+    }
+    selectPointRowInTables(selectedPointId);
+}
+
+QList<QTableWidget *> MainWindow::pointTables() const {
+    QList<QTableWidget *> tables;
+    if (trapTable) {
+        tables.append(trapTable);
+    }
+    if (cameraTrapTable) {
+        tables.append(cameraTrapTable);
+    }
+    return tables;
+}
+
+void MainWindow::clearPointTables() {
+    for (QTableWidget *table : pointTables()) {
+        table->setRowCount(0);
+    }
+}
+
+void MainWindow::addPointRowToTables(int pointId, const QPointF &pixelCoords) {
+    for (QTableWidget *table : pointTables()) {
+        const int row = table->rowCount();
+        table->insertRow(row);
+
+        QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(pointId));
+        idItem->setFlags(idItem->flags() & ~Qt::ItemIsEditable);
+        table->setItem(row, 0, idItem);
+        table->setItem(row, 1, new QTableWidgetItem(QString::number(static_cast<int>(pixelCoords.x()))));
+        table->setItem(row, 2, new QTableWidgetItem(QString::number(static_cast<int>(pixelCoords.y()))));
+    }
+}
+
+void MainWindow::updatePointRowInTables(int pointId, const QPointF &pixelCoords) {
+    for (QTableWidget *table : pointTables()) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            QTableWidgetItem *idItem = table->item(row, 0);
+            if (!idItem || idItem->text().toInt() != pointId) {
+                continue;
+            }
+
+            QTableWidgetItem *xItem = table->item(row, 1);
+            QTableWidgetItem *yItem = table->item(row, 2);
+            if (!xItem) {
+                xItem = new QTableWidgetItem();
+                table->setItem(row, 1, xItem);
+            }
+            if (!yItem) {
+                yItem = new QTableWidgetItem();
+                table->setItem(row, 2, yItem);
+            }
+            xItem->setText(QString::number(static_cast<int>(pixelCoords.x())));
+            yItem->setText(QString::number(static_cast<int>(pixelCoords.y())));
+            break;
+        }
+    }
+}
+
+void MainWindow::removePointRowFromTables(int pointId) {
+    for (QTableWidget *table : pointTables()) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            QTableWidgetItem *idItem = table->item(row, 0);
+            if (idItem && idItem->text().toInt() == pointId) {
+                table->removeRow(row);
+                break;
+            }
+        }
+    }
+}
+
+void MainWindow::selectPointRowInTables(int pointId) {
+    for (QTableWidget *table : pointTables()) {
+        for (int row = 0; row < table->rowCount(); ++row) {
+            QTableWidgetItem *idItem = table->item(row, 0);
+            if (idItem && idItem->text().toInt() == pointId) {
+                table->selectRow(row);
+                break;
+            }
+        }
+    }
+}
+
+void MainWindow::clearPointTableSelections() {
+    for (QTableWidget *table : pointTables()) {
+        table->clearSelection();
+    }
+}
+
+void MainWindow::moveSelectedPointByKeyboard(int deltaX, int deltaY) {
+    if (!shouldHandleGlobalPointShortcut()) {
+        return;
+    }
+
+    if (!gridPointData.contains(selectedPointId)) {
+        selectedPointId = -1;
+        return;
+    }
+
+    restoreSelectedPointSelection();
+    if (!targetGridWidget->movePointById(selectedPointId, deltaX, deltaY)) {
+        selectedPointId = -1;
+    }
+}
+
+void MainWindow::removeSelectedPointByKeyboard() {
+    if (!shouldHandleGlobalPointShortcut()) {
+        return;
+    }
+
+    if (!targetGridWidget->hasPoint(selectedPointId)) {
+        selectedPointId = -1;
+        return;
+    }
+
+    restoreSelectedPointSelection();
+    targetGridWidget->removePoint(selectedPointId);
+}
+
+void MainWindow::removeLastCreatedPointByKeyboard() {
+    if (!isActiveWindow() || !targetGridWidget) {
+        return;
+    }
+
+    QWidget *focusedWidget = QApplication::focusWidget();
+    if (focusedWidget) {
+        if (focusedWidget->window() != this || isEditableInputWidget(focusedWidget)) {
+            return;
+        }
+    }
+
+    if (gridPointData.isEmpty()) {
+        return;
+    }
+
+    int lastPointId = -1;
+    for (auto it = gridPointData.cbegin(); it != gridPointData.cend(); ++it) {
+        lastPointId = qMax(lastPointId, it.key());
+    }
+
+    if (lastPointId < 0 || !targetGridWidget->hasPoint(lastPointId)) {
+        return;
+    }
+
+    targetGridWidget->removePoint(lastPointId);
+}
+
 void MainWindow::onSendToSlmRequested() {
     if (isAutoMaskGenerationAlgorithmSelected() && !gridPointData.isEmpty()) {
         if (!generateAlgorithmMask(true, GsRunTrigger::SendToSlmPreRun)) {
@@ -1713,9 +1980,28 @@ void MainWindow::updateCameraFeed(const QImage &img) {
     }
 
     lastCameraFrame = img.copy();
-    lastRenderedCameraFrame = buildCameraDisplayImage(lastCameraFrame);
-    lastZoomedRenderedCameraFrame = applyCameraZoomToDisplayImage(lastRenderedCameraFrame);
+    lastRenderedCameraFrame = buildCameraDisplayImage(lastCameraFrame, false);
+    lastOverlayRenderedCameraFrame = buildCameraDisplayImage(lastCameraFrame, true);
+    lastZoomedRenderedCameraFrame = applyCameraZoomToDisplayImage(lastOverlayRenderedCameraFrame);
     updateCameraFeedLabel(lastZoomedRenderedCameraFrame);
+
+    if (targetGridWidget) {
+        const QSize liveGridSize = lastRenderedCameraFrame.size();
+        if (liveGridSize.isValid() && targetGridWidget->gridResolution() != liveGridSize) {
+            targetGridWidget->setGridResolution(liveGridSize.width(), liveGridSize.height());
+            targetGridWidget->centerView();
+        }
+    }
+
+    if (targetModeTabs && targetGridWidget && targetModeTabs->currentIndex() == kCameraTabIndex) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        constexpr qint64 kTargetCameraPreviewIntervalMs = 100;
+        if ((nowMs - lastTargetCameraTabUpdateMs) >= kTargetCameraPreviewIntervalMs) {
+            lastTargetCameraTabUpdateMs = nowMs;
+            targetGridWidget->setBackgroundImage(lastRenderedCameraFrame);
+            targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::LiveCamera);
+        }
+    }
 
     if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
         updateExternalCameraPreview();
@@ -1746,7 +2032,7 @@ void MainWindow::loadTargetImage() {
 
     if (targetModeTabs->currentIndex() == kImageTabIndex) {
         targetGridWidget->setBackgroundImage(loadedTargetImageGray);
-        targetGridWidget->setImageMode(true);
+        targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::StaticImage);
     }
 
     statusBar()->showMessage("Target image loaded and converted to camera-sized grayscale.", 4000);
@@ -1761,7 +2047,7 @@ void MainWindow::clearTargetImage() {
 
     targetGridWidget->clearBackgroundImage();
     if (targetModeTabs->currentIndex() == kImageTabIndex) {
-        targetGridWidget->setImageMode(true);
+        targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::StaticImage);
     }
 
     statusBar()->showMessage("Target image cleared.", 3000);
@@ -1769,14 +2055,23 @@ void MainWindow::clearTargetImage() {
 
 void MainWindow::onTabChanged(int index) {
     if (index == kImageTabIndex) {
-        targetGridWidget->setImageMode(true);
+        targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::StaticImage);
         if (!loadedTargetImageGray.isNull()) {
             targetGridWidget->setBackgroundImage(loadedTargetImageGray);
         } else {
             targetGridWidget->clearBackgroundImage();
         }
+    } else if (index == kCameraTabIndex) {
+        targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::LiveCamera);
+        lastTargetCameraTabUpdateMs = 0;
+        if (!lastRenderedCameraFrame.isNull()) {
+            targetGridWidget->setBackgroundImage(lastRenderedCameraFrame);
+        } else {
+            targetGridWidget->clearBackgroundImage();
+        }
     } else {
-        targetGridWidget->setImageMode(false);
+        targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::GridOnly);
+        targetGridWidget->clearBackgroundImage();
     }
 }
 
@@ -1795,8 +2090,8 @@ void MainWindow::onCameraZoomRoiChanged(const QRectF &roiNormalized, bool enable
         camManager->setZoomRegionNormalized(cameraZoomRoiNormalized, cameraZoomEnabled);
     }
 
-    if (!lastRenderedCameraFrame.isNull()) {
-        lastZoomedRenderedCameraFrame = applyCameraZoomToDisplayImage(lastRenderedCameraFrame);
+    if (!lastOverlayRenderedCameraFrame.isNull()) {
+        lastZoomedRenderedCameraFrame = applyCameraZoomToDisplayImage(lastOverlayRenderedCameraFrame);
         updateCameraFeedLabel(lastZoomedRenderedCameraFrame);
     }
 
@@ -1891,16 +2186,8 @@ void MainWindow::onScreenTopologyChanged() {
 void MainWindow::onGridPointAdded(int pointId, QPointF pixelCoords) {
     gridPointData[pointId] = pixelCoords;
 
-    // Add row to trap table
-    int row = trapTable->rowCount();
     trapTableSyncInProgress = true;
-    trapTable->insertRow(row);
-
-    QTableWidgetItem *idItem = new QTableWidgetItem(QString::number(pointId));
-    idItem->setFlags(idItem->flags() & ~Qt::ItemIsEditable);
-    trapTable->setItem(row, 0, idItem);
-    trapTable->setItem(row, 1, new QTableWidgetItem(QString::number((int)pixelCoords.x())));
-    trapTable->setItem(row, 2, new QTableWidgetItem(QString::number((int)pixelCoords.y())));
+    addPointRowToTables(pointId, pixelCoords);
     trapTableSyncInProgress = false;
 
     if (!suppressGridStatusMessages) {
@@ -1919,33 +2206,16 @@ void MainWindow::onGridPointMoved(int pointId, QPointF newPixelCoords) {
     if (gridPointData.contains(pointId)) {
         gridPointData[pointId] = newPixelCoords;
 
-        // Update table row
-        for (int row = 0; row < trapTable->rowCount(); ++row) {
-            QTableWidgetItem *idItem = trapTable->item(row, 0);
-            if (idItem && idItem->text().toInt() == pointId) {
-                trapTableSyncInProgress = true;
-                QTableWidgetItem *xItem = trapTable->item(row, 1);
-                QTableWidgetItem *yItem = trapTable->item(row, 2);
-                if (!xItem) {
-                    xItem = new QTableWidgetItem();
-                    trapTable->setItem(row, 1, xItem);
-                }
-                if (!yItem) {
-                    yItem = new QTableWidgetItem();
-                    trapTable->setItem(row, 2, yItem);
-                }
-                xItem->setText(QString::number((int)newPixelCoords.x()));
-                yItem->setText(QString::number((int)newPixelCoords.y()));
-                trapTableSyncInProgress = false;
-                break;
-            }
-        }
+        trapTableSyncInProgress = true;
+        updatePointRowInTables(pointId, newPixelCoords);
+        trapTableSyncInProgress = false;
 
         lastGeneratedPatternSummary.clear();
         lastGeneratedPatternDetails.clear();
         statusBar()->showMessage(QString("Point #%1 moved to (%2, %3)").arg(pointId).arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()), 2000);
         if (pointId == selectedPointId && gridHoverLabel) {
             gridHoverLabel->setText(QString("Grid: %1, %2").arg((int)newPixelCoords.x()).arg((int)newPixelCoords.y()));
+            restoreSelectedPointSelection();
         }
         scheduleGsAutoRun();
         if (overlayTargetCb && overlayTargetCb->isChecked() && !lastCameraFrame.isNull()) {
@@ -1959,16 +2229,21 @@ void MainWindow::onTrapTableItemChanged(QTableWidgetItem *item) {
         return;
     }
 
+    QTableWidget *sourceTable = item->tableWidget();
+    if (!sourceTable) {
+        return;
+    }
+
     const int row = item->row();
     const int column = item->column();
-    if (row < 0 || row >= trapTable->rowCount()) {
+    if (row < 0 || row >= sourceTable->rowCount()) {
         return;
     }
     if (column != 1 && column != 2) {
         return;
     }
 
-    QTableWidgetItem *idItem = trapTable->item(row, 0);
+    QTableWidgetItem *idItem = sourceTable->item(row, 0);
     if (!idItem) {
         return;
     }
@@ -2013,18 +2288,7 @@ void MainWindow::onTrapTableItemChanged(QTableWidgetItem *item) {
     gridPointData[pointId] = updatedCoords;
 
     trapTableSyncInProgress = true;
-    QTableWidgetItem *xItem = trapTable->item(row, 1);
-    QTableWidgetItem *yItem = trapTable->item(row, 2);
-    if (!xItem) {
-        xItem = new QTableWidgetItem();
-        trapTable->setItem(row, 1, xItem);
-    }
-    if (!yItem) {
-        yItem = new QTableWidgetItem();
-        trapTable->setItem(row, 2, yItem);
-    }
-    xItem->setText(QString::number(static_cast<int>(updatedCoords.x())));
-    yItem->setText(QString::number(static_cast<int>(updatedCoords.y())));
+    updatePointRowInTables(pointId, updatedCoords);
     trapTableSyncInProgress = false;
 
     if (updatedCoords != previousCoords) {
@@ -2046,13 +2310,9 @@ void MainWindow::onGridPointRemoved(int pointId) {
     if (gridPointData.contains(pointId)) {
         gridPointData.remove(pointId);
 
-        // Remove from table
-        for (int row = 0; row < trapTable->rowCount(); ++row) {
-            if (trapTable->item(row, 0)->text().toInt() == pointId) {
-                trapTable->removeRow(row);
-                break;
-            }
-        }
+        trapTableSyncInProgress = true;
+        removePointRowFromTables(pointId);
+        trapTableSyncInProgress = false;
 
         lastGeneratedPatternSummary.clear();
         lastGeneratedPatternDetails.clear();
@@ -2072,13 +2332,7 @@ void MainWindow::onGridPointRemoved(int pointId) {
 void MainWindow::onGridPointSelected(int pointId) {
     selectedPointId = pointId;
     
-    // Highlight the row in the table
-    for (int row = 0; row < trapTable->rowCount(); ++row) {
-        if (trapTable->item(row, 0)->text().toInt() == pointId) {
-            trapTable->selectRow(row);
-            break;
-        }
-    }
+    selectPointRowInTables(pointId);
     
     if (gridPointData.contains(pointId) && gridHoverLabel) {
         const QPointF p = gridPointData.value(pointId);
@@ -2116,7 +2370,7 @@ void MainWindow::replaceGridWithPoints(const QVector<QPointF> &points) {
     updateGridHoverReadout(QPoint(), false);
 
     gridPointData.clear();
-    trapTable->setRowCount(0);
+    clearPointTables();
     targetGridWidget->clearAllPoints();
 
     for (const QPointF &point : points) {
@@ -2558,17 +2812,11 @@ void MainWindow::applyTrapHighlightForCurrentFrame(const QVector<QPointF> &point
     if (selectedSequenceTrapIndexOneBased > 0 &&
         selectedSequenceTrapIndexOneBased <= points.size()) {
         selectedPointId = selectedSequenceTrapIndexOneBased;
-        for (int row = 0; row < trapTable->rowCount(); ++row) {
-            if (trapTable->item(row, 0) && trapTable->item(row, 0)->text().toInt() == selectedPointId) {
-                trapTable->selectRow(row);
-                return;
-            }
-        }
+        selectPointRowInTables(selectedPointId);
+        return;
     } else {
         selectedPointId = -1;
-        if (trapTable) {
-            trapTable->clearSelection();
-        }
+        clearPointTableSelections();
     }
 }
 
@@ -3156,7 +3404,7 @@ void MainWindow::clearDirectOutput() {
     directOutputWindow->hide();
 }
 
-QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
+QImage MainWindow::buildCameraDisplayImage(const QImage &img, bool includeTargetOverlay) const {
     if (img.isNull()) {
         return QImage();
     }
@@ -3174,16 +3422,14 @@ QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
         displayImg = displayImg.transformed(transform, Qt::SmoothTransformation);
     }
 
-    if (overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
+    if (includeTargetOverlay && overlayTargetCb && overlayTargetCb->isChecked() && !gridPointData.isEmpty()) {
         QPainter painter(&displayImg);
         painter.setRenderHint(QPainter::Antialiasing, true);
 
-        const double rawW = qMax(1, img.width());
-        const double rawH = qMax(1, img.height());
-        const double rawHalfW = rawW / 2.0;
-        const double rawHalfH = rawH / 2.0;
         const int imgW = displayImg.width();
         const int imgH = displayImg.height();
+        const double displayHalfW = static_cast<double>(imgW) / 2.0;
+        const double displayHalfH = static_cast<double>(imgH) / 2.0;
         const int pointRadius = qMax(3, qMin(imgW, imgH) / 90);
         const int highlightRadius = pointRadius + 4;
 
@@ -3191,11 +3437,9 @@ QImage MainWindow::buildCameraDisplayImage(const QImage &img) const {
             const int pointId = it.key();
             const QPointF p = it.value();
 
-            // Overlay intentionally ignores camera rotation and flip so it remains
-            // in the same coordinate orientation as the target grid points.
-            const qreal normX = (p.x() + rawHalfW) / rawW;
-            const qreal normY = (rawHalfH - p.y()) / rawH;
-            const QPointF imagePoint(normX * imgW, normY * imgH);
+            // gridPointData is stored in the same centered coordinate system as the
+            // transformed target camera view, so map directly into the displayed frame.
+            const QPointF imagePoint(displayHalfW + p.x(), displayHalfH - p.y());
             const int px = qBound(0, static_cast<int>(qRound(imagePoint.x())), imgW - 1);
             const int py = qBound(0, static_cast<int>(qRound(imagePoint.y())), imgH - 1);
 
@@ -3369,8 +3613,9 @@ void MainWindow::updateGridHoverReadout(const QPoint &viewportPos, bool validHov
         return;
     }
 
-    const int gx = qRound(scenePos.x());
-    const int gy = qRound(scenePos.y());
+    const QPointF logicalPos = targetGridWidget->sceneToPixel(scenePos);
+    const int gx = qRound(logicalPos.x());
+    const int gy = qRound(logicalPos.y());
     gridHoverLabel->setText(QString("Grid: %1, %2").arg(gx).arg(gy));
 }
 

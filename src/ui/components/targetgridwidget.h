@@ -40,13 +40,23 @@ class TargetGridWidget : public QGraphicsView {
     Q_OBJECT
 
 public:
+    enum class DisplayMode {
+        GridOnly,
+        StaticImage,
+        LiveCamera
+    };
+
     explicit TargetGridWidget(int cameraWidth = 1920, int cameraHeight = 1080, QWidget *parent = nullptr);
     ~TargetGridWidget();
     
     // Add/remove points
     void addPoint(QPointF pixelCoords);
+    void addPoint(QPointF pixelCoords, int pointId);
     void removePoint(int pointId);
     void clearAllPoints();
+    bool hasPoint(int pointId) const;
+    bool selectPoint(int pointId);
+    bool movePointById(int pointId, int deltaX, int deltaY);
     bool setPointCoordinates(int pointId, const QPointF &pixelCoords);
     
     // Get all points
@@ -54,6 +64,7 @@ public:
     
     // Grid settings
     void setGridResolution(int cameraWidth, int cameraHeight);
+    QSize gridResolution() const { return QSize(cameraWidth, cameraHeight); }
     
     // Center the view
     void centerView();
@@ -61,14 +72,13 @@ public:
     // Theme support
     void setDarkMode(bool dark);
     
-    // Keyboard support for moving selected point
-    void moveSelectedPoint(int deltaX, int deltaY);  // Delta in pixels
-
     // Image mode support
     void setBackgroundImage(const QImage &imgGrayCameraSized);
     void clearBackgroundImage();
-    void setImageMode(bool enabled);
-    bool isImageMode() const { return imageMode; }
+    void setDisplayMode(DisplayMode mode);
+    DisplayMode displayMode() const { return currentDisplayMode; }
+    QPointF sceneToPixel(QPointF scenePos) const;
+    QPointF pixelToScene(QPointF pixelPos) const;
     
 signals:
     void pointAdded(int pointId, QPointF pixelCoords);
@@ -84,16 +94,19 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void drawBackground(QPainter *painter, const QRectF &rect) override;
+    void drawForeground(QPainter *painter, const QRectF &rect) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
 
 private:
     void updateGridDisplay();
     void deselectAllPoints();
-    bool removeLastCreatedPoint();
     QPointF screenToPixel(QPointF screenPos) const;
     QPointF pixelToScreen(QPointF pixelPos) const;
     void fitGridToView();
+    bool isInteractiveDisplayMode() const;
+    void drawGridOverlay(QPainter *painter, const QRectF &rect, bool hasImageBackground) const;
+    void updateBackgroundPixmap();
     
     QGraphicsScene *gridScene;
     int cameraWidth;      // Camera resolution width in pixels
@@ -105,7 +118,7 @@ private:
     QPointF pointDragOffset;
     QGraphicsPixmapItem *imageItem;
     QImage backgroundImage;
-    bool imageMode;
+    DisplayMode currentDisplayMode;
     
     // Theme colors
     bool isDarkMode;
@@ -116,6 +129,7 @@ private:
     QColor centerPointColor;
     QColor borderColor;
     QColor textColor;
+    bool fitGridInProgress = false;
     
     void updateThemeColors();
 };

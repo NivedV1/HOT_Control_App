@@ -5,6 +5,7 @@
 #include <QImage>
 #include <QString>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -60,6 +61,10 @@ private:
     mutable std::mutex stateMutex;
     std::atomic<bool> running{false};
     std::thread receiveThread;
+    std::mutex startupMutex;
+    std::condition_variable startupCv;
+    bool startupComplete = false;
+    bool startupSucceeded = false;
 
     QString bindIp = "0.0.0.0";
     quint16 bindPort = 9000;

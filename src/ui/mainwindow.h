@@ -164,7 +164,7 @@ private:
     void ensureDirectOutputWindow();
     void displayDirectOutput(const QImage &finalMask);
     void clearDirectOutput();
-    QImage buildCameraDisplayImage(const QImage &img) const;
+    QImage buildCameraDisplayImage(const QImage &img, bool includeTargetOverlay) const;
     QImage applyCameraZoomToDisplayImage(const QImage &img) const;
     QRect cameraZoomRectForSize(const QSize &size) const;
     QRectF normalizedCameraZoomRoiForSize(const QSize &size, const QRectF &roi) const;
@@ -205,12 +205,25 @@ private:
     int animationTimerIntervalMs() const;
     int currentSequenceFps() const;
     QString defaultPythonScriptTemplate() const;
+    bool shouldHandleGlobalPointShortcut() const;
+    void moveSelectedPointByKeyboard(int deltaX, int deltaY);
+    void removeSelectedPointByKeyboard();
+    void removeLastCreatedPointByKeyboard();
+    void restoreSelectedPointSelection();
+    QList<QTableWidget *> pointTables() const;
+    void clearPointTables();
+    void addPointRowToTables(int pointId, const QPointF &pixelCoords);
+    void updatePointRowInTables(int pointId, const QPointF &pixelCoords);
+    void removePointRowFromTables(int pointId);
+    void selectPointRowInTables(int pointId);
+    void clearPointTableSelections();
 
     // UI Pointers
     TargetGridWidget *targetGridWidget;
     QTabWidget *targetModeTabs;
     PatternPresetsWidget *patternPresetsWidget = nullptr;
     QTableWidget *trapTable;
+    QTableWidget *cameraTrapTable = nullptr;
     QLabel *phaseMaskLabel;
     QLabel *gridHoverLabel = nullptr;
     QLabel *resolutionLabel;
@@ -219,6 +232,8 @@ private:
     QPushButton *saveMaskBtn;
     QPushButton *addPointsBtn;
     QPushButton *clearAllPointsBtn;
+    QPushButton *cameraTabAddPointsBtn = nullptr;
+    QPushButton *cameraTabClearAllPointsBtn = nullptr;
     QWidget *animationTab = nullptr;
     QScrollArea *animationScrollArea = nullptr;
     QWidget *animationContentWidget = nullptr;
@@ -374,7 +389,9 @@ private:
     QString lastGeneratedPatternDetails;
     QImage lastCameraFrame;
     QImage lastRenderedCameraFrame;
+    QImage lastOverlayRenderedCameraFrame;
     QImage lastZoomedRenderedCameraFrame;
+    qint64 lastTargetCameraTabUpdateMs = 0;
     QRectF cameraZoomRoiNormalized = QRectF(0.0, 0.0, 1.0, 1.0);
     bool cameraZoomEnabled = false;
     bool cameraZoomDragActive = false;

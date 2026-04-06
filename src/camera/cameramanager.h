@@ -64,6 +64,8 @@ private slots:
     void checkUdpHealth();
 
 private:
+    bool revertRecordButtonIfPossible() const;
+    bool openRecordingWriter(const QString &path, bool saveCompressed, const cv::Size &frameSize, bool isColor, const QString &sourceLabel);
     QRectF normalizedZoomRoiForSize(const QSize &size, const QRectF &roi) const;
     QRect zoomCropRectForSize(const QSize &size) const;
     QImage applyZoomCrop(const QImage &image) const;
