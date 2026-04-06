@@ -169,8 +169,10 @@ private:
     QRect cameraZoomRectForSize(const QSize &size) const;
     QRectF normalizedCameraZoomRoiForSize(const QSize &size, const QRectF &roi) const;
     QRect cameraFeedDrawRectForImage(const QSize &imageSize) const;
+    QRect previewDrawRectForImage(const QLabel *label, const QSize &imageSize) const;
     QRectF normalizedSelectionFromPoints(const QPoint &start, const QPoint &end, const QRect &drawRect) const;
     void updateCameraFeedLabel(const QImage &displayImg);
+    void updatePreviewLabelImage(QLabel *label, const QImage &displayImg, bool showZoomOverlay);
     void refreshCameraPreviewMonitorOptions();
     void updateCameraPreviewButtonState();
     void updateCameraPreviewButtonText();
@@ -178,9 +180,12 @@ private:
     void updateExternalCameraPreview();
     void clearCameraPreviewOutput();
     void handleCameraFeedStopped();
-    void updateCameraPixelReadout(const QPoint &labelPos, bool validHover);
+    void updateCameraPixelReadout(const QPoint &labelPos, bool validHover, const QLabel *sourceLabel = nullptr);
     void updateGridHoverReadout(const QPoint &viewportPos, bool validHover);
     void tryAutoApplySavedCorrection();
+    void applyCameraZoomState(const QRectF &roiNormalized, bool enabled, bool recordHistory);
+    void resetCameraZoom();
+    void undoCameraZoomStep();
 
     void updateAlgorithmSettingsUi();
     void scheduleGsAutoRun();
@@ -362,6 +367,11 @@ private:
     QLabel *directOutputLabel = nullptr;
     QWidget *cameraPreviewWindow = nullptr;
     QLabel *cameraPreviewWindowLabel = nullptr;
+    QPushButton *cameraPreviewWindowSaveBtn = nullptr;
+    QPushButton *cameraPreviewWindowRecordBtn = nullptr;
+    QLabel *cameraPreviewWindowRecordTimeLabel = nullptr;
+    QLabel *cameraPreviewWindowFpsLabel = nullptr;
+    QLabel *cameraPreviewWindowPixelLabel = nullptr;
     int cameraPreviewWindowMonitorNumber = -1;
 
     // Auto-run timer
@@ -393,6 +403,7 @@ private:
     QImage lastZoomedRenderedCameraFrame;
     qint64 lastTargetCameraTabUpdateMs = 0;
     QRectF cameraZoomRoiNormalized = QRectF(0.0, 0.0, 1.0, 1.0);
+    QVector<QRectF> cameraZoomHistory;
     bool cameraZoomEnabled = false;
     bool cameraZoomDragActive = false;
     QPoint cameraZoomDragStart;

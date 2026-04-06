@@ -520,14 +520,14 @@ void MainWindow::createMonitors(QGridLayout *layout) {
     cameraFeedLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding); 
     cameraFeedLabel->setMinimumSize(300, 200); 
     cameraFeedLabel->setMouseTracking(true);
-    cameraFeedLabel->setToolTip("Drag to select zoom region. Double-click to reset zoom.");
+    cameraFeedLabel->setToolTip("Left-drag to zoom. Right-click to undo one zoom step. Double-click to reset zoom.");
     cameraColLayout->addWidget(cameraFeedLabel);
     
     // Camera tools
     QHBoxLayout *camTools = new QHBoxLayout();
     fpsLabel = new QLabel("FPS: 0");
     camTools->addWidget(fpsLabel);
-    cameraPixelLabel = new QLabel("Pixel: --, -- | I: --");
+    cameraPixelLabel = new QLabel("Camera: --, -- | I: --");
     camTools->addWidget(cameraPixelLabel);
     camTools->addStretch();
     overlayTargetCb = new QCheckBox("Overlay Target");
@@ -860,6 +860,9 @@ void MainWindow::createControls(QGridLayout *layout) {
     connect(recordTimeHideTimer, &QTimer::timeout, this, [this]() {
         if (recordTimeLabel && recordVideoBtn && !recordVideoBtn->isChecked()) {
             recordTimeLabel->setVisible(false);
+            if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+                updateExternalCameraPreview();
+            }
         }
     });
     captureLayout->addWidget(captureImageBtn);
@@ -996,6 +999,9 @@ void MainWindow::setupConnections() {
             recordTimeLabel->setVisible(true);
         } else {
             recordTimeHideTimer->start();
+        }
+        if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+            updateExternalCameraPreview();
         }
     });
 
@@ -2076,15 +2082,36 @@ void MainWindow::onTabChanged(int index) {
 }
 
 void MainWindow::onCameraZoomRoiChanged(const QRectF &roiNormalized, bool enabled) {
-    cameraZoomEnabled = enabled;
-    if (cameraZoomEnabled) {
+    applyCameraZoomState(roiNormalized, enabled, true);
+}
+
+void MainWindow::applyCameraZoomState(const QRectF &roiNormalized, bool enabled, bool recordHistory) {
+    const QRectF fullView(0.0, 0.0, 1.0, 1.0);
+    QRectF nextRoi = fullView;
+    bool nextEnabled = enabled;
+
+    if (enabled) {
         const QSize basisSize = !lastRenderedCameraFrame.isNull()
                                     ? lastRenderedCameraFrame.size()
                                     : QSize(qMax(1, camWidth), qMax(1, camHeight));
-        cameraZoomRoiNormalized = normalizedCameraZoomRoiForSize(basisSize, roiNormalized);
-    } else {
-        cameraZoomRoiNormalized = QRectF(0.0, 0.0, 1.0, 1.0);
+        nextRoi = normalizedCameraZoomRoiForSize(basisSize, roiNormalized);
+        const bool fullWidth = qAbs(nextRoi.width() - 1.0) < 1e-6;
+        const bool fullHeight = qAbs(nextRoi.height() - 1.0) < 1e-6;
+        const bool fullX = qAbs(nextRoi.x()) < 1e-6;
+        const bool fullY = qAbs(nextRoi.y()) < 1e-6;
+        if (fullWidth && fullHeight && fullX && fullY) {
+            nextEnabled = false;
+            nextRoi = fullView;
+        }
     }
+
+    const QRectF currentRoi = cameraZoomEnabled ? cameraZoomRoiNormalized : fullView;
+    if (recordHistory && currentRoi != nextRoi) {
+        cameraZoomHistory.append(currentRoi);
+    }
+
+    cameraZoomEnabled = nextEnabled;
+    cameraZoomRoiNormalized = nextEnabled ? nextRoi : fullView;
 
     if (camManager) {
         camManager->setZoomRegionNormalized(cameraZoomRoiNormalized, cameraZoomEnabled);
@@ -2100,6 +2127,22 @@ void MainWindow::onCameraZoomRoiChanged(const QRectF &roiNormalized, bool enable
     }
 }
 
+void MainWindow::resetCameraZoom() {
+    cameraZoomHistory.clear();
+    applyCameraZoomState(QRectF(0.0, 0.0, 1.0, 1.0), false, false);
+}
+
+void MainWindow::undoCameraZoomStep() {
+    if (cameraZoomHistory.isEmpty()) {
+        resetCameraZoom();
+        return;
+    }
+
+    const QRectF previousRoi = cameraZoomHistory.takeLast();
+    const QRectF fullView(0.0, 0.0, 1.0, 1.0);
+    applyCameraZoomState(previousRoi, previousRoi != fullView, false);
+}
+
 void MainWindow::onRecordingTimeUpdated(const QString &timeString) {
     if (recordVideoBtn->isChecked()) {
         if (recordTimeHideTimer) {
@@ -2108,10 +2151,16 @@ void MainWindow::onRecordingTimeUpdated(const QString &timeString) {
         recordTimeLabel->setVisible(true);
     }
     recordTimeLabel->setText(timeString);
+    if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+        updateExternalCameraPreview();
+    }
 }
 
 void MainWindow::onFPSUpdated(const QString &fpsString) {
     fpsLabel->setText(fpsString);
+    if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+        updateExternalCameraPreview();
+    }
 }
 
 void MainWindow::onCameraPreviewMonitorChanged(int index) {
@@ -3521,13 +3570,17 @@ QRectF MainWindow::normalizedCameraZoomRoiForSize(const QSize &size, const QRect
 }
 
 QRect MainWindow::cameraFeedDrawRectForImage(const QSize &imageSize) const {
-    if (!cameraFeedLabel || imageSize.width() <= 0 || imageSize.height() <= 0) {
+    return previewDrawRectForImage(cameraFeedLabel, imageSize);
+}
+
+QRect MainWindow::previewDrawRectForImage(const QLabel *label, const QSize &imageSize) const {
+    if (!label || imageSize.width() <= 0 || imageSize.height() <= 0) {
         return QRect();
     }
     QSize targetSize = imageSize;
-    targetSize.scale(cameraFeedLabel->size(), Qt::KeepAspectRatio);
-    const int x = (cameraFeedLabel->width() - targetSize.width()) / 2;
-    const int y = (cameraFeedLabel->height() - targetSize.height()) / 2;
+    targetSize.scale(label->size(), Qt::KeepAspectRatio);
+    const int x = (label->width() - targetSize.width()) / 2;
+    const int y = (label->height() - targetSize.height()) / 2;
     return QRect(QPoint(x, y), targetSize);
 }
 
@@ -3554,19 +3607,26 @@ QRectF MainWindow::normalizedSelectionFromPoints(const QPoint &start, const QPoi
                   (bottom - top) / h);
 }
 
-void MainWindow::updateCameraPixelReadout(const QPoint &labelPos, bool validHover) {
+void MainWindow::updateCameraPixelReadout(const QPoint &labelPos, bool validHover, const QLabel *sourceLabel) {
     if (!cameraPixelLabel) {
         return;
     }
 
     if (!validHover || lastRenderedCameraFrame.isNull() || lastZoomedRenderedCameraFrame.isNull()) {
-        cameraPixelLabel->setText("Pixel: --, -- | I: --");
+        cameraPixelLabel->setText("Camera: --, -- | I: --");
+        if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+            updateExternalCameraPreview();
+        }
         return;
     }
 
-    const QRect drawRect = cameraFeedDrawRectForImage(lastZoomedRenderedCameraFrame.size());
+    const QLabel *activeLabel = sourceLabel ? sourceLabel : cameraFeedLabel;
+    const QRect drawRect = previewDrawRectForImage(activeLabel, lastZoomedRenderedCameraFrame.size());
     if (drawRect.isEmpty() || !drawRect.contains(labelPos)) {
-        cameraPixelLabel->setText("Pixel: --, -- | I: --");
+        cameraPixelLabel->setText("Camera: --, -- | I: --");
+        if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+            updateExternalCameraPreview();
+        }
         return;
     }
 
@@ -3577,7 +3637,7 @@ void MainWindow::updateCameraPixelReadout(const QPoint &labelPos, bool validHove
 
     const QRect cropRect = cameraZoomRectForSize(lastRenderedCameraFrame.size());
     if (cropRect.width() <= 0 || cropRect.height() <= 0) {
-        cameraPixelLabel->setText("Pixel: --, -- | I: --");
+        cameraPixelLabel->setText("Camera: --, -- | I: --");
         return;
     }
 
@@ -3587,7 +3647,12 @@ void MainWindow::updateCameraPixelReadout(const QPoint &labelPos, bool validHove
     const int absY = cropRect.y() + yInCrop;
     const QRgb rgb = lastRenderedCameraFrame.pixel(absX, absY);
     const int intensity = qGray(rgb);
-    cameraPixelLabel->setText(QString("Pixel: %1, %2 | I: %3").arg(absX).arg(absY).arg(intensity));
+    const int centeredX = absX - (lastRenderedCameraFrame.width() / 2);
+    const int centeredY = (lastRenderedCameraFrame.height() / 2) - absY;
+    cameraPixelLabel->setText(QString("Camera: %1, %2 | I: %3").arg(centeredX).arg(centeredY).arg(intensity));
+    if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
+        updateExternalCameraPreview();
+    }
 }
 
 void MainWindow::updateGridHoverReadout(const QPoint &viewportPos, bool validHover) {
@@ -3620,16 +3685,20 @@ void MainWindow::updateGridHoverReadout(const QPoint &viewportPos, bool validHov
 }
 
 void MainWindow::updateCameraFeedLabel(const QImage &displayImg) {
-    if (!cameraFeedLabel || displayImg.isNull()) {
+    updatePreviewLabelImage(cameraFeedLabel, displayImg, true);
+}
+
+void MainWindow::updatePreviewLabelImage(QLabel *label, const QImage &displayImg, bool showZoomOverlay) {
+    if (!label || displayImg.isNull()) {
         return;
     }
 
-    cameraFeedLabel->setText(QString());
+    label->setText(QString());
     QPixmap pixmap = QPixmap::fromImage(displayImg).scaled(
-        cameraFeedLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
-    if (cameraZoomDragActive && !pixmap.isNull()) {
-        const QRect drawRect = cameraFeedDrawRectForImage(displayImg.size());
+    if (showZoomOverlay && cameraZoomDragActive && !pixmap.isNull()) {
+        const QRect drawRect = previewDrawRectForImage(label, displayImg.size());
         if (!drawRect.isEmpty()) {
             QPainter painter(&pixmap);
             painter.setRenderHint(QPainter::Antialiasing, true);
@@ -3649,40 +3718,49 @@ void MainWindow::updateCameraFeedLabel(const QImage &displayImg) {
         }
     }
 
-    cameraFeedLabel->setPixmap(pixmap);
+    label->setPixmap(pixmap);
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
-    if (watched == cameraFeedLabel && cameraFeedLabel) {
+    const bool mainPreviewHovered = (watched == cameraFeedLabel && cameraFeedLabel);
+    const bool externalPreviewHovered = (watched == cameraPreviewWindowLabel && cameraPreviewWindowLabel);
+    if (mainPreviewHovered || externalPreviewHovered) {
+        QLabel *activeLabel = mainPreviewHovered ? cameraFeedLabel : cameraPreviewWindowLabel;
         if (event->type() == QEvent::MouseButtonPress) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
+            if (mouseEvent->button() == Qt::RightButton) {
+                cameraZoomDragActive = false;
+                undoCameraZoomStep();
+                updateCameraPixelReadout(mouseEvent->pos(), true, activeLabel);
+                return true;
+            }
             if (mouseEvent->button() == Qt::LeftButton && !lastZoomedRenderedCameraFrame.isNull()) {
-                const QRect drawRect = cameraFeedDrawRectForImage(lastZoomedRenderedCameraFrame.size());
+                const QRect drawRect = previewDrawRectForImage(activeLabel, lastZoomedRenderedCameraFrame.size());
                 if (drawRect.contains(mouseEvent->pos())) {
                     cameraZoomDragActive = true;
                     cameraZoomDragStart = mouseEvent->pos();
                     cameraZoomDragCurrent = cameraZoomDragStart;
-                    updateCameraFeedLabel(lastZoomedRenderedCameraFrame);
+                    updatePreviewLabelImage(activeLabel, lastZoomedRenderedCameraFrame, true);
                     return true;
                 }
             }
         } else if (event->type() == QEvent::MouseMove) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
-            updateCameraPixelReadout(mouseEvent->pos(), true);
+            updateCameraPixelReadout(mouseEvent->pos(), true, activeLabel);
             if (cameraZoomDragActive) {
                 cameraZoomDragCurrent = mouseEvent->pos();
-                updateCameraFeedLabel(lastZoomedRenderedCameraFrame);
+                updatePreviewLabelImage(activeLabel, lastZoomedRenderedCameraFrame, true);
                 return true;
             }
         } else if (event->type() == QEvent::Leave) {
-            updateCameraPixelReadout(QPoint(), false);
+            updateCameraPixelReadout(QPoint(), false, activeLabel);
         } else if (event->type() == QEvent::MouseButtonRelease) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
             if (cameraZoomDragActive && mouseEvent->button() == Qt::LeftButton && !lastRenderedCameraFrame.isNull()) {
                 cameraZoomDragActive = false;
                 cameraZoomDragCurrent = mouseEvent->pos();
 
-                const QRect drawRect = cameraFeedDrawRectForImage(lastZoomedRenderedCameraFrame.size());
+                const QRect drawRect = previewDrawRectForImage(activeLabel, lastZoomedRenderedCameraFrame.size());
                 const QRect currentCropRect = cameraZoomRectForSize(lastRenderedCameraFrame.size());
                 const QRectF localNorm = normalizedSelectionFromPoints(cameraZoomDragStart, cameraZoomDragCurrent, drawRect);
 
@@ -3697,10 +3775,10 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             }
         } else if (event->type() == QEvent::MouseButtonDblClick) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent *>(event);
-            if (mouseEvent->button() == Qt::LeftButton) {
+            if (mouseEvent->button() == Qt::LeftButton || mouseEvent->button() == Qt::RightButton) {
                 cameraZoomDragActive = false;
-                onCameraZoomRoiChanged(QRectF(0.0, 0.0, 1.0, 1.0), false);
-                updateCameraPixelReadout(mouseEvent->pos(), true);
+                resetCameraZoom();
+                updateCameraPixelReadout(mouseEvent->pos(), true, activeLabel);
                 return true;
             }
         }
@@ -3794,11 +3872,61 @@ void MainWindow::ensureCameraPreviewWindow() {
     cameraPreviewWindow->setAttribute(Qt::WA_QuitOnClose, false);
     cameraPreviewWindow->setAttribute(Qt::WA_ShowWithoutActivating, true);
     cameraPreviewWindow->setWindowFlag(Qt::BypassWindowManagerHint, true);
-    cameraPreviewWindow->setWindowFlag(Qt::WindowDoesNotAcceptFocus, true);
-    cameraPreviewWindow->setFocusPolicy(Qt::NoFocus);
-    cameraPreviewWindowLabel = new QLabel(cameraPreviewWindow);
+    cameraPreviewWindow->setStyleSheet("background-color: #101010; color: #f0f0f0;");
+
+    QVBoxLayout *windowLayout = new QVBoxLayout(cameraPreviewWindow);
+    windowLayout->setContentsMargins(28, 28, 28, 28);
+    windowLayout->setSpacing(18);
+
+    cameraPreviewWindowLabel = new QLabel("Camera Feed (Offline)", cameraPreviewWindow);
+    cameraPreviewWindowLabel->setObjectName("cameraPreviewWindowLabel");
     cameraPreviewWindowLabel->setAlignment(Qt::AlignCenter);
     cameraPreviewWindowLabel->setScaledContents(false);
+    cameraPreviewWindowLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    cameraPreviewWindowLabel->setMinimumSize(320, 200);
+    cameraPreviewWindowLabel->setMouseTracking(true);
+    cameraPreviewWindowLabel->setToolTip("Left-drag to zoom. Right-click to undo one zoom step. Double-click to reset zoom.");
+    cameraPreviewWindowLabel->setStyleSheet("background-color: #000000; border: 2px solid #3a3a3a; border-radius: 12px;");
+    cameraPreviewWindowLabel->installEventFilter(this);
+    windowLayout->addWidget(cameraPreviewWindowLabel, 1);
+
+    QWidget *infoPanel = new QWidget(cameraPreviewWindow);
+    infoPanel->setStyleSheet("background-color: #1c1c1c; border-radius: 16px;");
+    QVBoxLayout *infoLayout = new QVBoxLayout(infoPanel);
+    infoLayout->setContentsMargins(18, 18, 18, 18);
+    infoLayout->setSpacing(12);
+
+    QHBoxLayout *buttonRow = new QHBoxLayout();
+    buttonRow->setSpacing(12);
+    cameraPreviewWindowSaveBtn = new QPushButton("Save Image", infoPanel);
+    cameraPreviewWindowRecordBtn = new QPushButton("Record Video", infoPanel);
+    cameraPreviewWindowRecordBtn->setCheckable(true);
+    cameraPreviewWindowRecordBtn->setStyleSheet("QPushButton:checked { background-color: #aa0000; color: white; border: 1px solid #ff0000; }");
+    cameraPreviewWindowRecordTimeLabel = new QLabel("00:00", infoPanel);
+    cameraPreviewWindowRecordTimeLabel->setStyleSheet("color: #ff4444; font-weight: bold; font-family: monospace;");
+    buttonRow->addWidget(cameraPreviewWindowSaveBtn);
+    buttonRow->addWidget(cameraPreviewWindowRecordBtn);
+    buttonRow->addWidget(cameraPreviewWindowRecordTimeLabel);
+    buttonRow->addStretch();
+    infoLayout->addLayout(buttonRow);
+
+    cameraPreviewWindowFpsLabel = new QLabel(fpsLabel ? fpsLabel->text() : "FPS: 0", infoPanel);
+    cameraPreviewWindowPixelLabel = new QLabel(cameraPixelLabel ? cameraPixelLabel->text() : "Camera: --, -- | I: --", infoPanel);
+    infoLayout->addWidget(cameraPreviewWindowFpsLabel);
+    infoLayout->addWidget(cameraPreviewWindowPixelLabel);
+    windowLayout->addWidget(infoPanel, 0);
+
+    connect(cameraPreviewWindowSaveBtn, &QPushButton::clicked, this, [this]() {
+        if (captureImageBtn) {
+            captureImageBtn->click();
+        }
+    });
+    connect(cameraPreviewWindowRecordBtn, &QPushButton::toggled, this, [this](bool checked) {
+        if (!recordVideoBtn) {
+            return;
+        }
+        recordVideoBtn->setChecked(checked);
+    });
 }
 
 void MainWindow::updateExternalCameraPreview() {
@@ -3814,37 +3942,36 @@ void MainWindow::updateExternalCameraPreview() {
 
     ensureCameraPreviewWindow();
 
-    const QRect screenGeometry = screen->geometry();
-    QImage canvas(screenGeometry.size(), QImage::Format_ARGB32_Premultiplied);
-    canvas.fill(Qt::black);
-
-    QPainter painter(&canvas);
     if (cameraFeedActive && !lastZoomedRenderedCameraFrame.isNull()) {
-        QSize targetSize = lastZoomedRenderedCameraFrame.size();
-        targetSize.scale(canvas.size(), Qt::KeepAspectRatio);
-        const QRect targetRect(QPoint((canvas.width() - targetSize.width()) / 2,
-                                      (canvas.height() - targetSize.height()) / 2),
-                               targetSize);
-        painter.drawImage(targetRect, lastZoomedRenderedCameraFrame);
+        updatePreviewLabelImage(cameraPreviewWindowLabel, lastZoomedRenderedCameraFrame, false);
     } else {
-        painter.setRenderHint(QPainter::TextAntialiasing, true);
-        painter.setPen(QColor(150, 150, 150));
-
-        QFont font = painter.font();
-        font.setBold(true);
-        font.setPointSize(qMax(18, qMin(canvas.width(), canvas.height()) / 28));
-        painter.setFont(font);
-        painter.drawText(canvas.rect(), Qt::AlignCenter, "Camera Feed (Offline)");
+        cameraPreviewWindowLabel->setPixmap(QPixmap());
+        cameraPreviewWindowLabel->setText("Camera Feed (Offline)");
     }
-    painter.end();
 
+    const bool recording = recordVideoBtn && recordVideoBtn->isChecked();
+    if (cameraPreviewWindowRecordBtn) {
+        QSignalBlocker blocker(cameraPreviewWindowRecordBtn);
+        cameraPreviewWindowRecordBtn->setChecked(recording);
+        cameraPreviewWindowRecordBtn->setText(recording ? "Recording" : "Record Video");
+    }
+    if (cameraPreviewWindowRecordTimeLabel) {
+        cameraPreviewWindowRecordTimeLabel->setText(
+            (recordTimeLabel && recordTimeLabel->isVisible()) ? recordTimeLabel->text() : "00:00");
+    }
+    if (cameraPreviewWindowFpsLabel) {
+        cameraPreviewWindowFpsLabel->setText(fpsLabel ? fpsLabel->text() : "FPS: --");
+    }
+    if (cameraPreviewWindowPixelLabel) {
+        cameraPreviewWindowPixelLabel->setText(cameraPixelLabel ? cameraPixelLabel->text() : "Camera: --, -- | I: --");
+    }
+
+    const QRect screenGeometry = screen->geometry();
     const bool monitorChanged = (cameraPreviewWindowMonitorNumber != cameraPreviewMonitorNumber);
     const bool geometryChanged = (cameraPreviewWindow->geometry() != screenGeometry);
     const bool needsReshow = monitorChanged || geometryChanged || !cameraPreviewWindow->isVisible();
 
     cameraPreviewWindow->setGeometry(screenGeometry);
-    cameraPreviewWindowLabel->setGeometry(0, 0, canvas.width(), canvas.height());
-    cameraPreviewWindowLabel->setPixmap(QPixmap::fromImage(canvas));
 
     if (needsReshow) {
         cameraPreviewWindow->createWinId();
