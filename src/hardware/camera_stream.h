@@ -22,6 +22,7 @@ public:
     bool isRunning() const;
 
     QImage latestFrame() const;
+    QString latestSenderIp() const;
 
 signals:
     void frameReady(const QImage &frame, quint32 frameId);
@@ -89,6 +90,7 @@ private:
     qint64 lastDropStatusMs = 0;
 
     QImage lastFrame;
+    QString lastSenderIpAddress;
 };
 
 #endif // CAMERA_STREAM_H

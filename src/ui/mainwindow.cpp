@@ -57,11 +57,13 @@
 #include <QCursor>
 #include <QMouseEvent>
 #include <QEvent>
+#include <QHostAddress>
 #include <QAbstractSpinBox>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QTextEdit>
 #include <QtMath>
+#include <cstring>
 
 namespace {
 constexpr int kImageTabIndex = 2;
@@ -79,6 +81,37 @@ constexpr int kAlgorithmGsIndex = 0;
 constexpr int kAlgorithmWeightedGsIndex = 1;
 constexpr int kAlgorithmRmeIndex = 2;
 constexpr qreal kMinZoomRoiNormalized = 0.03;
+constexpr quint16 kXpSenderOverlayPort = 9001;
+constexpr quint16 kXpSenderOverlayProtocolVersion = 1;
+constexpr char kXpSenderOverlayMagic[4] = {'X', 'P', 'O', 'L'};
+
+#pragma pack(push, 1)
+struct XpSenderOverlayPacketHeader {
+    char magic[4];
+    quint16 version;
+    quint16 pointCount;
+    quint16 imageWidth;
+    quint16 imageHeight;
+    quint32 frameId;
+    quint16 rotationDegrees;
+    quint8 flags;
+    quint8 reserved[3];
+};
+
+struct XpSenderOverlayPoint {
+    quint16 x;
+    quint16 y;
+    quint8 flags;
+    quint8 reserved[3];
+};
+#pragma pack(pop)
+
+enum : quint8 {
+    kXpSenderOverlayFlagEnabled = 0x01,
+    kXpSenderOverlayFlagFlipX = 0x02,
+    kXpSenderOverlayFlagFlipY = 0x04,
+    kXpSenderOverlayPointFlagSelected = 0x01
+};
 
 QString hardwareConfigPath() {
     return QCoreApplication::applicationDirPath() + "/hardware_config.ini";
@@ -267,6 +300,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("Holographic Optical Tweezer Control");
     setWindowIcon(QIcon(":/favicon.ico"));
     setMinimumSize(800, 600);
+    xpSenderOverlaySocket = new QUdpSocket(this);
 
     QSettings settings(configPath(), QSettings::IniFormat);
 
@@ -431,7 +465,24 @@ void MainWindow::createMenus() {
     connect(monitorSelectionMenu, &QMenu::aboutToShow, this, &MainWindow::refreshMonitorSelectionMenu);
     connect(monitorActionGroup, &QActionGroup::triggered, this, &MainWindow::onMonitorActionTriggered);
 
-    menuBar()->addMenu("&Help");
+    QMenu *helpMenu = menuBar()->addMenu("&Help");
+    QAction *aboutAction = helpMenu->addAction("About");
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::showAboutDialog);
+}
+
+void MainWindow::showAboutDialog() {
+    const QString version = QCoreApplication::applicationVersion().isEmpty()
+        ? QStringLiteral("Unversioned build")
+        : QStringLiteral("Version %1").arg(QCoreApplication::applicationVersion());
+
+    QMessageBox::about(
+        this,
+        QStringLiteral("About Holographic Optical Tweezer Control"),
+        QStringLiteral(
+            "Holographic Optical Tweezer Control\n\n"
+            "%1\n\n"
+            "Use this version note to track which build is currently running.")
+            .arg(version));
 }
 
 void MainWindow::createMonitors(QGridLayout *layout) {
@@ -1048,6 +1099,8 @@ void MainWindow::setupConnections() {
     connect(overlayTargetCb, &QCheckBox::toggled, this, [this](bool) {
         if (!lastCameraFrame.isNull()) {
             updateCameraFeed(lastCameraFrame);
+        } else {
+            clearXpSenderOverlay();
         }
     });
 
@@ -2012,6 +2065,8 @@ void MainWindow::updateCameraFeed(const QImage &img) {
     if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
         updateExternalCameraPreview();
     }
+
+    publishXpSenderOverlay();
 }
 
 void MainWindow::loadTargetImage() {
@@ -3721,6 +3776,109 @@ void MainWindow::updatePreviewLabelImage(QLabel *label, const QImage &displayImg
     label->setPixmap(pixmap);
 }
 
+void MainWindow::publishXpSenderOverlay() {
+    if (!xpSenderOverlaySocket || !camManager) {
+        return;
+    }
+
+    if (cameraBackend != static_cast<int>(CameraManager::CameraBackend::UdpStream) ||
+        !cameraFeedActive ||
+        lastCameraFrame.isNull()) {
+        clearXpSenderOverlay();
+        return;
+    }
+
+    const QString senderIp = camManager->latestUdpSenderIp().trimmed();
+    if (senderIp.isEmpty()) {
+        return;
+    }
+
+    XpSenderOverlayPacketHeader header{};
+    std::memcpy(header.magic, kXpSenderOverlayMagic, sizeof(header.magic));
+    header.version = kXpSenderOverlayProtocolVersion;
+    header.pointCount = 0;
+    header.imageWidth = static_cast<quint16>(qBound(0, lastCameraFrame.width(), 65535));
+    header.imageHeight = static_cast<quint16>(qBound(0, lastCameraFrame.height(), 65535));
+    header.frameId = camManager->latestUdpFrameId();
+    header.rotationDegrees = static_cast<quint16>(normalizeCameraRotation(cameraViewRotationDegrees));
+    if (overlayTargetCb && overlayTargetCb->isChecked()) {
+        header.flags |= kXpSenderOverlayFlagEnabled;
+    }
+    if (flipCameraX) {
+        header.flags |= kXpSenderOverlayFlagFlipX;
+    }
+    if (flipCameraY) {
+        header.flags |= kXpSenderOverlayFlagFlipY;
+    }
+
+    QByteArray payload;
+    payload.reserve(static_cast<int>(sizeof(XpSenderOverlayPacketHeader) +
+                                     sizeof(XpSenderOverlayPoint) * gridPointData.size()));
+    payload.append(reinterpret_cast<const char *>(&header), static_cast<int>(sizeof(header)));
+
+    if ((header.flags & kXpSenderOverlayFlagEnabled) != 0) {
+        const int imgW = lastCameraFrame.width();
+        const int imgH = lastCameraFrame.height();
+        const int displayW = lastRenderedCameraFrame.width();
+        const int displayH = lastRenderedCameraFrame.height();
+        const double displayHalfW = static_cast<double>(displayW) / 2.0;
+        const double displayHalfH = static_cast<double>(displayH) / 2.0;
+        QTransform displayTransform;
+        if (flipCameraX || flipCameraY) {
+            displayTransform.scale(flipCameraX ? -1 : 1, flipCameraY ? -1 : 1);
+        }
+        if (cameraViewRotationDegrees != 0) {
+            displayTransform.rotate(static_cast<qreal>(cameraViewRotationDegrees));
+        }
+        const QPolygonF mappedRect = displayTransform.map(QPolygonF(QRectF(0.0, 0.0, imgW, imgH)));
+        const QRectF mappedBounds = mappedRect.boundingRect();
+        const QTransform displayToImageTransform = displayTransform.inverted();
+
+        quint16 pointCount = 0;
+        for (auto it = gridPointData.constBegin(); it != gridPointData.constEnd(); ++it) {
+            const QPointF displayPixelPoint(displayHalfW + it.value().x(), displayHalfH - it.value().y());
+            const QPointF rawImagePoint = displayToImageTransform.map(displayPixelPoint + mappedBounds.topLeft());
+            XpSenderOverlayPoint point{};
+            point.x = static_cast<quint16>(qBound(0, static_cast<int>(qRound(rawImagePoint.x())), imgW - 1));
+            point.y = static_cast<quint16>(qBound(0, static_cast<int>(qRound(rawImagePoint.y())), imgH - 1));
+            if (it.key() == selectedPointId) {
+                point.flags |= kXpSenderOverlayPointFlagSelected;
+            }
+            payload.append(reinterpret_cast<const char *>(&point), static_cast<int>(sizeof(point)));
+            ++pointCount;
+        }
+
+        if (pointCount > 0) {
+            auto *mutableHeader = reinterpret_cast<XpSenderOverlayPacketHeader *>(payload.data());
+            mutableHeader->pointCount = pointCount;
+        }
+    }
+
+    xpSenderOverlaySocket->writeDatagram(payload, QHostAddress(senderIp), kXpSenderOverlayPort);
+}
+
+void MainWindow::clearXpSenderOverlay() {
+    if (!xpSenderOverlaySocket || !camManager) {
+        return;
+    }
+
+    const QString senderIp = camManager->latestUdpSenderIp().trimmed();
+    if (senderIp.isEmpty()) {
+        return;
+    }
+
+    XpSenderOverlayPacketHeader header{};
+    std::memcpy(header.magic, kXpSenderOverlayMagic, sizeof(header.magic));
+    header.version = kXpSenderOverlayProtocolVersion;
+    header.imageWidth = static_cast<quint16>(qBound(0, lastCameraFrame.width(), 65535));
+    header.imageHeight = static_cast<quint16>(qBound(0, lastCameraFrame.height(), 65535));
+    header.frameId = camManager->latestUdpFrameId();
+    header.rotationDegrees = static_cast<quint16>(normalizeCameraRotation(cameraViewRotationDegrees));
+
+    const QByteArray payload(reinterpret_cast<const char *>(&header), static_cast<int>(sizeof(header)));
+    xpSenderOverlaySocket->writeDatagram(payload, QHostAddress(senderIp), kXpSenderOverlayPort);
+}
+
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     const bool mainPreviewHovered = (watched == cameraFeedLabel && cameraFeedLabel);
     const bool externalPreviewHovered = (watched == cameraPreviewWindowLabel && cameraPreviewWindowLabel);
@@ -3999,6 +4157,7 @@ void MainWindow::handleCameraFeedStopped() {
     if (cameraPreviewToggleBtn && cameraPreviewToggleBtn->isChecked()) {
         updateExternalCameraPreview();
     }
+    clearXpSenderOverlay();
 }
 
 void MainWindow::refreshMonitorSelectionMenu() {

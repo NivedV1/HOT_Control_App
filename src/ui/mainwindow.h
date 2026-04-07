@@ -15,6 +15,7 @@
 #include <QVector>
 #include <QString>
 #include <QRectF>
+#include <QUdpSocket>
 #include <cstdint>
 #include <QLibrary> // For dynamic DLL loading
 
@@ -72,6 +73,7 @@ private slots:
     void onGenerateGsMaskClicked();
     void onGsAutoRunTimeout();
     void onSendToSlmRequested();
+    void showAboutDialog();
 
     // Image tab slots
     void loadTargetImage();
@@ -173,6 +175,8 @@ private:
     QRectF normalizedSelectionFromPoints(const QPoint &start, const QPoint &end, const QRect &drawRect) const;
     void updateCameraFeedLabel(const QImage &displayImg);
     void updatePreviewLabelImage(QLabel *label, const QImage &displayImg, bool showZoomOverlay);
+    void publishXpSenderOverlay();
+    void clearXpSenderOverlay();
     void refreshCameraPreviewMonitorOptions();
     void updateCameraPreviewButtonState();
     void updateCameraPreviewButtonText();
@@ -409,6 +413,7 @@ private:
     QPoint cameraZoomDragStart;
     QPoint cameraZoomDragCurrent;
     bool cameraFeedActive = false;
+    QUdpSocket *xpSenderOverlaySocket = nullptr;
 };
 
 #endif // MAINWINDOW_H

@@ -75,6 +75,11 @@ QImage CameraStream::latestFrame() const {
     return lastFrame.copy();
 }
 
+QString CameraStream::latestSenderIp() const {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    return lastSenderIpAddress;
+}
+
 void CameraStream::queueStatusMessage(const QString &message) {
     QMetaObject::invokeMethod(this, [this, message]() {
         emit statusMessage(message);
@@ -266,7 +271,16 @@ void CameraStream::receiveLoop() {
     char recvBuffer[kMaxPacket];
 
     while (running.load()) {
-        const int bytesReceived = recvfrom(sock, recvBuffer, sizeof(recvBuffer), 0, nullptr, nullptr);
+        sockaddr_in senderAddr;
+        int senderAddrLen = sizeof(senderAddr);
+        std::memset(&senderAddr, 0, sizeof(senderAddr));
+
+        const int bytesReceived = recvfrom(sock,
+                                           recvBuffer,
+                                           sizeof(recvBuffer),
+                                           0,
+                                           reinterpret_cast<sockaddr *>(&senderAddr),
+                                           &senderAddrLen);
         if (bytesReceived == SOCKET_ERROR) {
             const int err = WSAGetLastError();
             if (err == WSAETIMEDOUT || err == WSAEWOULDBLOCK) {
@@ -280,6 +294,13 @@ void CameraStream::receiveLoop() {
 
         if (bytesReceived < static_cast<int>(sizeof(LegacyPacketHeaderV2))) {
             continue;
+        }
+
+        char senderIpBuffer[INET_ADDRSTRLEN] = {};
+        if (senderAddrLen >= static_cast<int>(sizeof(senderAddr)) &&
+            inet_ntop(AF_INET, &senderAddr.sin_addr, senderIpBuffer, sizeof(senderIpBuffer)) != nullptr) {
+            std::lock_guard<std::mutex> lock(stateMutex);
+            lastSenderIpAddress = QString::fromLatin1(senderIpBuffer);
         }
 
         PacketHeader header{};

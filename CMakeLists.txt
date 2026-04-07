@@ -17,7 +17,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Find Qt6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Multimedia MultimediaWidgets Network)
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 if (MSVC)
     if (DEFINED Python3_LIBRARY_RELEASE AND EXISTS "${Python3_LIBRARY_RELEASE}")
@@ -234,6 +234,10 @@ else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE HOT_ENABLE_CUDA_GS=0)
 endif()
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    HOT_APP_VERSION="${PROJECT_VERSION}"
+)
+
 if (WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         HOT_EMBED_PYTHON_HOME="${HOT_PYTHON_HOME_DIR_CMAKE}"
@@ -258,6 +262,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link the Qt libraries and OpenCV to your executable
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
+    Qt6::Network
     Qt6::Gui
     Qt6::Widgets
     Qt6::Multimedia

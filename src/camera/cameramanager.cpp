@@ -12,6 +12,13 @@
 #include <QtMath>
 #include <QFileInfo>
 
+namespace {
+struct WriterAttempt {
+    int codec;
+    const char *label;
+};
+}
+
 bool CameraManager::revertRecordButtonIfPossible() const {
     QPushButton *btn = qobject_cast<QPushButton*>(sender());
     if (!btn) {
@@ -35,36 +42,150 @@ bool CameraManager::openRecordingWriter(const QString &path,
 
     const QString suffix = QFileInfo(path).suffix().trimmed().toLower();
     const bool uncompressed = !saveCompressed;
-    int codec = 0;
-
-    if (uncompressed) {
-        if (suffix != QStringLiteral("avi")) {
-            emit statusMessage(sourceLabel + ": uncompressed recording requires an AVI file.");
-            return false;
-        }
-        codec = cv::VideoWriter::fourcc('D', 'I', 'B', ' ');
-    } else if (suffix == QStringLiteral("mp4")) {
-        codec = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
-    } else {
-        codec = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-    }
 
     if (cvVideoWriter.isOpened()) {
         cvVideoWriter.release();
     }
 
-    cvVideoWriter.open(path.toStdString(), codec, 30.0, frameSize, isColor);
-    if (!cvVideoWriter.isOpened() && uncompressed) {
-        cvVideoWriter.open(path.toStdString(), 0, 30.0, frameSize, isColor);
+    cvWriterIsColor = isColor;
+    cvWriterModeLabel.clear();
+    cvWriterUsingLosslessFallback = false;
+
+    QList<WriterAttempt> attempts;
+    if (uncompressed) {
+        if (suffix != QStringLiteral("avi")) {
+            emit statusMessage(sourceLabel + ": uncompressed recording requires an AVI file.");
+            return false;
+        }
+
+        if (isColor) {
+            attempts.append({cv::VideoWriter::fourcc('D', 'I', 'B', ' '), "DIB "});
+            attempts.append({cv::VideoWriter::fourcc('R', 'G', 'B', ' '), "RGB "});
+        } else {
+            attempts.append({cv::VideoWriter::fourcc('Y', '8', '0', '0'), "Y800"});
+            attempts.append({cv::VideoWriter::fourcc('G', 'R', 'E', 'Y'), "GREY"});
+            attempts.append({cv::VideoWriter::fourcc('Y', '8', ' ', ' '), "Y8"});
+        }
+
+        attempts.append({0, "raw-default"});
+        attempts.append({cv::VideoWriter::fourcc('F', 'F', 'V', '1'), "FFV1"});
+        attempts.append({cv::VideoWriter::fourcc('H', 'F', 'Y', 'U'), "HFYU"});
+    } else if (suffix == QStringLiteral("mp4")) {
+        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), "mp4v"});
+    } else {
+        attempts.append({cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), "MJPG"});
+        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), "mp4v"});
+    }
+
+    QStringList triedCodecs;
+    QString openedCodec;
+    for (const WriterAttempt &attempt : attempts) {
+        triedCodecs << QString::fromLatin1(attempt.label);
+        cvVideoWriter.open(path.toStdString(), attempt.codec, 30.0, frameSize, isColor);
+        if (cvVideoWriter.isOpened()) {
+            openedCodec = QString::fromLatin1(attempt.label);
+            break;
+        }
     }
 
     if (!cvVideoWriter.isOpened()) {
         const QString modeLabel = uncompressed ? QStringLiteral("uncompressed") : QStringLiteral("compressed");
-        emit statusMessage(sourceLabel + ": failed to open " + modeLabel + " video writer.");
+        emit statusMessage(sourceLabel + ": failed to open " + modeLabel + " video writer. Tried " + triedCodecs.join(", ") + ".");
         return false;
     }
 
+    if (uncompressed && (openedCodec == QStringLiteral("FFV1") || openedCodec == QStringLiteral("HFYU"))) {
+        cvWriterUsingLosslessFallback = true;
+    }
+
+    cvWriterModeLabel = openedCodec;
+
     return true;
+}
+
+bool CameraManager::imageLooksGrayscale(const QImage &image) const {
+    return !image.isNull() && (image.isGrayscale() || image.allGray());
+}
+
+int CameraManager::normalizedRotationDegrees(int degrees) const {
+    int normalized = degrees % 360;
+    if (normalized < 0) {
+        normalized += 360;
+    }
+    if (normalized == 90 || normalized == 180 || normalized == 270) {
+        return normalized;
+    }
+    return 0;
+}
+
+QTransform CameraManager::cameraDisplayTransform() const {
+    QTransform transform;
+    if (cvFlipX || cvFlipY) {
+        transform.scale(cvFlipX ? -1 : 1, cvFlipY ? -1 : 1);
+    }
+
+    const int rotation = normalizedRotationDegrees(cvRot);
+    if (rotation != 0) {
+        transform.rotate(static_cast<qreal>(rotation));
+    }
+    return transform;
+}
+
+QImage CameraManager::processImageForExport(const QImage &image, bool saveFollowsTransforms) const {
+    if (image.isNull()) {
+        return image;
+    }
+
+    QImage processed = image;
+    const bool useDisplayOrientation = zoomEnabled || saveFollowsTransforms;
+    if (useDisplayOrientation) {
+        const QTransform transform = cameraDisplayTransform();
+        if (!transform.isIdentity()) {
+            processed = processed.transformed(transform, Qt::SmoothTransformation);
+        }
+    }
+
+    if (zoomEnabled) {
+        processed = applyZoomCrop(processed);
+    }
+
+    return processed;
+}
+
+QImage CameraManager::imageFromCvMat(const cv::Mat &frame) const {
+    if (frame.empty()) {
+        return QImage();
+    }
+
+    if (frame.channels() == 1) {
+        QImage image(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_Grayscale8);
+        return image.copy();
+    }
+
+    cv::Mat rgbFrame;
+    cv::cvtColor(frame, rgbFrame, cv::COLOR_BGR2RGB);
+    QImage image(rgbFrame.data, rgbFrame.cols, rgbFrame.rows, rgbFrame.step, QImage::Format_RGB888);
+    return image.copy();
+}
+
+cv::Mat CameraManager::videoMatFromImage(const QImage &image, bool isColor) const {
+    if (image.isNull()) {
+        return cv::Mat();
+    }
+
+    if (isColor) {
+        QImage rgbImage = image.convertToFormat(QImage::Format_RGB888);
+        cv::Mat rgbMat(rgbImage.height(), rgbImage.width(), CV_8UC3,
+                       const_cast<uchar *>(rgbImage.constBits()), rgbImage.bytesPerLine());
+        cv::Mat bgrMat;
+        cv::cvtColor(rgbMat, bgrMat, cv::COLOR_RGB2BGR);
+        return bgrMat;
+    }
+
+    QImage grayImage = image.convertToFormat(QImage::Format_Grayscale8);
+    cv::Mat grayMat(grayImage.height(), grayImage.width(), CV_8UC1,
+                    const_cast<uchar *>(grayImage.constBits()), grayImage.bytesPerLine());
+    return grayMat.clone();
 }
 
 CameraManager::CameraManager(int engineBackend,
@@ -117,6 +238,14 @@ CameraManager::CameraManager(int engineBackend,
 
 CameraManager::~CameraManager() {
     stopCamera();
+}
+
+QString CameraManager::latestUdpSenderIp() const {
+    return udpStream ? udpStream->latestSenderIp() : QString();
+}
+
+quint32 CameraManager::latestUdpFrameId() const {
+    return lastUdpFrameId;
 }
 
 QStringList CameraManager::getCameraNames() const {
@@ -334,17 +463,12 @@ void CameraManager::captureImage() {
     bool flipY = settings.value("Hardware/Camera_FlipY", false).toBool();
     int rot = settings.value("Hardware/Camera_ViewRotation", 0).toInt();
 
-    auto applyTransforms = [&](QImage &img) {
-        if (!save_follows) return img;
-        QTransform trans;
-        if (flipX || flipY) trans.scale(flipX ? -1 : 1, flipY ? -1 : 1);
-        if (rot != 0) trans.rotate(rot);
-        return img.transformed(trans, Qt::SmoothTransformation);
-    };
+    cvFlipX = flipX;
+    cvFlipY = flipY;
+    cvRot = rot;
 
     if (backend == CameraBackend::QtNative && qtCamera && qtCamera->isActive()) {
-        QImage toSave = applyTransforms(lastUdpFrame);
-        toSave = applyZoomCrop(toSave);
+        QImage toSave = processImageForExport(lastUdpFrame, save_follows);
         if (!toSave.isNull() && toSave.save(path)) {
             emit statusMessage("Image saved: " + path);
         } else {
@@ -353,10 +477,7 @@ void CameraManager::captureImage() {
     } else if (backend == CameraBackend::OpenCV && cvCapture.isOpened()) {
         cv::Mat frame;
         cvCapture.read(frame);
-        cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
-        QImage img((const unsigned char*)(frame.data), frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
-        QImage toSave = applyTransforms(img);
-        toSave = applyZoomCrop(toSave);
+        QImage toSave = processImageForExport(imageFromCvMat(frame), save_follows);
         if (toSave.save(path)) {
             emit statusMessage("OpenCV Image saved: " + path);
         } else {
@@ -367,8 +488,7 @@ void CameraManager::captureImage() {
             emit statusMessage("UDP Stream: no frame available to save yet.");
             return;
         }
-        QImage toSave = applyTransforms(lastUdpFrame);
-        toSave = applyZoomCrop(toSave);
+        QImage toSave = processImageForExport(lastUdpFrame, save_follows);
         if (toSave.save(path)) {
             emit statusMessage("UDP Stream image saved: " + path);
         } else {
@@ -410,15 +530,6 @@ void CameraManager::toggleRecording(bool checked) {
         cvFlipY = settings.value("Hardware/Camera_FlipY", false).toBool();
         cvRot = settings.value("Hardware/Camera_ViewRotation", 0).toInt();
 
-        auto getFinalSize = [&](int width, int height) {
-            QSize finalSize(width, height);
-            if (cvSaveFollows && (cvRot == 90 || cvRot == 270)) {
-                finalSize = QSize(height, width);
-            }
-            const QRect cropRect = zoomCropRectForSize(finalSize);
-            return cv::Size(cropRect.width(), cropRect.height());
-        };
-
         if (backend == CameraBackend::QtNative && qtCamera && qtCamera->isActive()) {
             if (lastUdpFrame.isNull()) {
                 revertRecordButtonIfPossible();
@@ -426,10 +537,12 @@ void CameraManager::toggleRecording(bool checked) {
                 return;
             }
 
+            const QImage sampleImage = processImageForExport(lastUdpFrame, cvSaveFollows);
+
             if (!openRecordingWriter(path,
                                      save_compressed,
-                                     getFinalSize(lastUdpFrame.width(), lastUdpFrame.height()),
-                                     true,
+                                     cv::Size(sampleImage.width(), sampleImage.height()),
+                                     !imageLooksGrayscale(sampleImage),
                                      QStringLiteral("Webcam"))) {
                 revertRecordButtonIfPossible();
                 return;
@@ -439,11 +552,20 @@ void CameraManager::toggleRecording(bool checked) {
         } else if (backend == CameraBackend::OpenCV && cvCapture.isOpened()) {
             int width = cvCapture.get(cv::CAP_PROP_FRAME_WIDTH);
             int height = cvCapture.get(cv::CAP_PROP_FRAME_HEIGHT);
+            cv::Mat sampleFrame;
+            cvCapture.read(sampleFrame);
+            if (sampleFrame.empty()) {
+                revertRecordButtonIfPossible();
+                emit statusMessage("OpenCV: wait for first frame before recording.");
+                return;
+            }
+
+            const QImage sampleImage = processImageForExport(imageFromCvMat(sampleFrame), cvSaveFollows);
 
             if (!openRecordingWriter(path,
                                      save_compressed,
-                                     getFinalSize(width, height),
-                                     true,
+                                     cv::Size(sampleImage.width(), sampleImage.height()),
+                                     !imageLooksGrayscale(sampleImage),
                                      QStringLiteral("OpenCV"))) {
                 revertRecordButtonIfPossible();
                 return;
@@ -457,10 +579,12 @@ void CameraManager::toggleRecording(bool checked) {
                 return;
             }
 
+            const QImage sampleImage = processImageForExport(lastUdpFrame, cvSaveFollows);
+
             if (!openRecordingWriter(path,
                                      save_compressed,
-                                     getFinalSize(lastUdpFrame.width(), lastUdpFrame.height()),
-                                     false,
+                                     cv::Size(sampleImage.width(), sampleImage.height()),
+                                     !imageLooksGrayscale(sampleImage),
                                      QStringLiteral("UDP Stream"))) {
                 revertRecordButtonIfPossible();
                 return;
@@ -469,10 +593,22 @@ void CameraManager::toggleRecording(bool checked) {
             cvRecordStartTime = QDateTime::currentMSecsSinceEpoch();
         }
         emit recordingTimeUpdated("00:00");
-        emit statusMessage("Recording started...");
+        QString recordingMessage = "Recording started";
+        if (!save_compressed) {
+            if (cvWriterUsingLosslessFallback) {
+                recordingMessage += " (lossless AVI: " + cvWriterModeLabel + ")";
+            } else {
+                recordingMessage += " (raw AVI: " + cvWriterModeLabel + ")";
+            }
+        } else if (!cvWriterModeLabel.isEmpty()) {
+            recordingMessage += " (" + cvWriterModeLabel + ")";
+        }
+        emit statusMessage(recordingMessage + "...");
     } else {
         isRecordingCV = false;
         if (cvVideoWriter.isOpened()) cvVideoWriter.release();
+        cvWriterModeLabel.clear();
+        cvWriterUsingLosslessFallback = false;
         emit statusMessage("Recording saved.");
     }
 }
@@ -489,19 +625,8 @@ void CameraManager::onQtFrameReceived(const QVideoFrame &frame) {
         lastUdpFrame = img.copy(); // We reuse lastUdpFrame to cache the raw image for saving
         
         if (isRecordingCV && cvVideoWriter.isOpened()) {
-            QImage toWrite = img;
-            if (cvSaveFollows) {
-                QTransform trans;
-                if (cvFlipX || cvFlipY) trans.scale(cvFlipX ? -1 : 1, cvFlipY ? -1 : 1);
-                if (cvRot != 0) trans.rotate(cvRot);
-                toWrite = img.transformed(trans, Qt::SmoothTransformation);
-            }
-            toWrite = applyZoomCrop(toWrite);
-            QImage imgRGB = toWrite.convertToFormat(QImage::Format_RGB888);
-            cv::Mat mat(imgRGB.height(), imgRGB.width(), CV_8UC3, const_cast<uchar*>(imgRGB.constBits()), imgRGB.bytesPerLine());
-            cv::Mat bgrMat;
-            cv::cvtColor(mat, bgrMat, cv::COLOR_RGB2BGR);
-            cvVideoWriter.write(bgrMat);
+            const QImage toWrite = processImageForExport(img, cvSaveFollows);
+            cvVideoWriter.write(videoMatFromImage(toWrite, cvWriterIsColor));
             const qint64 duration = QDateTime::currentMSecsSinceEpoch() - cvRecordStartTime;
             onDurationChanged(duration);
         }
@@ -520,53 +645,29 @@ void CameraManager::processOpenCVFrame() {
     frameCount++;
 
     if (isRecordingCV && cvVideoWriter.isOpened()) {
-        cv::Mat frameToWrite = frame;
-        if (cvSaveFollows) {
-            if (cvFlipX && cvFlipY) cv::flip(frame, frameToWrite, -1);
-            else if (cvFlipX) cv::flip(frame, frameToWrite, 1);
-            else if (cvFlipY) cv::flip(frame, frameToWrite, 0);
-
-            if (cvRot == 90) cv::rotate(frameToWrite, frameToWrite, cv::ROTATE_90_CLOCKWISE);
-            else if (cvRot == 180) cv::rotate(frameToWrite, frameToWrite, cv::ROTATE_180);
-            else if (cvRot == 270) cv::rotate(frameToWrite, frameToWrite, cv::ROTATE_90_COUNTERCLOCKWISE);
-        }
-        frameToWrite = applyZoomCropMat(frameToWrite);
-        cvVideoWriter.write(frameToWrite);
+        const QImage processedImage = processImageForExport(imageFromCvMat(frame), cvSaveFollows);
+        cvVideoWriter.write(videoMatFromImage(processedImage, cvWriterIsColor));
         qint64 duration = QDateTime::currentMSecsSinceEpoch() - cvRecordStartTime;
         onDurationChanged(duration); // Update timer UI
     }
 
-    // Convert BGR (OpenCV) to RGB (Qt)
-    cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
-    QImage img((const unsigned char*)(frame.data), frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
-    
-    emit frameReady(img.copy()); // Use copy to prevent memory leaks from OpenCV pointers
+    emit frameReady(imageFromCvMat(frame)); // Use copy to prevent memory leaks from OpenCV pointers
 }
 
 void CameraManager::onUdpFrameReceived(const QImage &frame, quint32 frameId) {
-    Q_UNUSED(frameId);
     if (frame.isNull()) {
         return;
     }
 
     frameCount++;
     lastUdpFrame = frame.copy();
+    lastUdpFrameId = frameId;
     lastUdpFrameMs = QDateTime::currentMSecsSinceEpoch();
     udpTimeoutReported = false;
 
     if (isRecordingCV && cvVideoWriter.isOpened()) {
-        QImage toWrite = lastUdpFrame;
-        if (cvSaveFollows) {
-            QTransform trans;
-            if (cvFlipX || cvFlipY) trans.scale(cvFlipX ? -1 : 1, cvFlipY ? -1 : 1);
-            if (cvRot != 0) trans.rotate(cvRot);
-            toWrite = lastUdpFrame.transformed(trans, Qt::SmoothTransformation);
-        }
-        toWrite = applyZoomCrop(toWrite);
-        QImage grayImage = toWrite.convertToFormat(QImage::Format_Grayscale8);
-        cv::Mat grayMat(grayImage.height(), grayImage.width(), CV_8UC1,
-                        const_cast<uchar *>(grayImage.constBits()), grayImage.bytesPerLine());
-        cvVideoWriter.write(grayMat);
+        const QImage toWrite = processImageForExport(lastUdpFrame, cvSaveFollows);
+        cvVideoWriter.write(videoMatFromImage(toWrite, cvWriterIsColor));
         const qint64 duration = QDateTime::currentMSecsSinceEpoch() - cvRecordStartTime;
         onDurationChanged(duration);
     }
