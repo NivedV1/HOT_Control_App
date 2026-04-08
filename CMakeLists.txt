@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.16)
+﻿cmake_minimum_required(VERSION 3.16)
 
-project(HOT_Control_App VERSION 1.0 LANGUAGES CXX)
+project(HOT_Control_App VERSION 1.2 LANGUAGES CXX)
 option(HOT_TARGET_GT730 "Build for GT 730 / Kepler (CUDA sm_35)" ON)
 
 option(HOT_ENABLE_TEMP_GS_PROFILING "Enable temporary GS runtime profiling/logging instrumentation" ON)

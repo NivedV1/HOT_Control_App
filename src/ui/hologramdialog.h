@@ -39,6 +39,9 @@ private:
     QDoubleSpinBox *radialPeriodSpin;
     QSpinBox *topologicalChargeSpin;
     QDoubleSpinBox *amplitudeSpin;
+    QSpinBox *depthSpin;
+    QSpinBox *xOffsetSpin;
+    QSpinBox *yOffsetSpin;
     QCheckBox *invertPhaseCheck;
     
     QLabel *phasePreview;

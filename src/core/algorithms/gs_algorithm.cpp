@@ -132,13 +132,10 @@ struct PreparedGsData {
     QVector<float> initialPhaseRad;
 };
 
-bool prepareGsData(const GSAlgorithm::GSConfig &config,
-                   const QVector<float> &sourceAmplitude,
-                   const QVector<GSAlgorithm::GSTargetPoint> &targets,
-                   GSAlgorithm::GSResult &result,
-                   PreparedGsData &prepared) {
+bool validateGsInputs(const GSAlgorithm::GSConfig &config,
+                      const QVector<float> &sourceAmplitude,
+                      GSAlgorithm::GSResult &result) {
     result = GSAlgorithm::GSResult();
-    result.requestedTargetCount = targets.size();
 
     if (config.slmWidth <= 0 || config.slmHeight <= 0) {
         result.error = "Invalid SLM resolution for GS algorithm.";
@@ -166,21 +163,85 @@ bool prepareGsData(const GSAlgorithm::GSConfig &config,
         return false;
     }
 
+    return true;
+}
+
+void computeGsMappingScales(const GSAlgorithm::GSConfig &config,
+                            double &camDx,
+                            double &camDy,
+                            double &focalDx,
+                            double &focalDy) {
+    const double slmDx = config.slmPixelSizeUm * 1e-6;
+    const double slmDy = config.slmPixelSizeUm * 1e-6;
+    const double effectiveCamPixelSizeUm = config.camPixelSizeUm / config.cameraImagingMagnification;
+    camDx = effectiveCamPixelSizeUm * 1e-6;
+    camDy = effectiveCamPixelSizeUm * 1e-6;
+    const double wavelength = config.wavelengthNm * 1e-9;
+    const double focalLength = config.focalLengthMm * 1e-3;
+
+    focalDx = (wavelength * focalLength) / (static_cast<double>(config.slmWidth) * slmDx);
+    focalDy = (wavelength * focalLength) / (static_cast<double>(config.slmHeight) * slmDy);
+}
+
+bool initializeGsPhase(const GSAlgorithm::GSConfig &config,
+                       PreparedGsData &prepared) {
+    const int pixelCount = config.slmWidth * config.slmHeight;
+    prepared.initialPhaseRad.resize(pixelCount);
+
+    switch (config.startingPhaseMask) {
+    case GSAlgorithm::GSStartingPhaseMask::RandomPhase: {
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> phaseDist(-kPiF, kPiF);
+        for (int idx = 0; idx < pixelCount; ++idx) {
+            prepared.initialPhaseRad[idx] = phaseDist(rng);
+        }
+        break;
+    }
+    case GSAlgorithm::GSStartingPhaseMask::BinaryGrating:
+        for (int y = 0; y < config.slmHeight; ++y) {
+            const int rowBase = y * config.slmWidth;
+            for (int x = 0; x < config.slmWidth; ++x) {
+                const int idx = rowBase + x;
+                prepared.initialPhaseRad[idx] = (x % 2 == 0) ? 0.0f : kPiF;
+            }
+        }
+        break;
+    case GSAlgorithm::GSStartingPhaseMask::Checkerboard:
+    default:
+        for (int y = 0; y < config.slmHeight; ++y) {
+            const int rowBase = y * config.slmWidth;
+            for (int x = 0; x < config.slmWidth; ++x) {
+                const int idx = rowBase + x;
+                prepared.initialPhaseRad[idx] = ((x + y) % 2 == 0) ? 0.0f : kPiF;
+            }
+        }
+        break;
+    }
+
+    return true;
+}
+
+bool prepareGsData(const GSAlgorithm::GSConfig &config,
+                   const QVector<float> &sourceAmplitude,
+                   const QVector<GSAlgorithm::GSTargetPoint> &targets,
+                   GSAlgorithm::GSResult &result,
+                   PreparedGsData &prepared) {
+    if (!validateGsInputs(config, sourceAmplitude, result)) {
+        return false;
+    }
+    result.requestedTargetCount = targets.size();
+
     if (targets.isEmpty()) {
         result.error = "No target points found. Add at least one point on the target grid.";
         return false;
     }
 
-    const double slmDx = config.slmPixelSizeUm * 1e-6;
-    const double slmDy = config.slmPixelSizeUm * 1e-6;
-    const double effectiveCamPixelSizeUm = config.camPixelSizeUm / config.cameraImagingMagnification;
-    const double camDx = effectiveCamPixelSizeUm * 1e-6;
-    const double camDy = effectiveCamPixelSizeUm * 1e-6;
-    const double wavelength = config.wavelengthNm * 1e-9;
-    const double focalLength = config.focalLengthMm * 1e-3;
-
-    const double focalDx = (wavelength * focalLength) / (static_cast<double>(config.slmWidth) * slmDx);
-    const double focalDy = (wavelength * focalLength) / (static_cast<double>(config.slmHeight) * slmDy);
+    const int pixelCount = config.slmWidth * config.slmHeight;
+    double camDx = 0.0;
+    double camDy = 0.0;
+    double focalDx = 0.0;
+    double focalDy = 0.0;
+    computeGsMappingScales(config, camDx, camDy, focalDx, focalDy);
 
     if (focalDx == 0.0 || focalDy == 0.0) {
         result.error = "Computed focal-plane pixel pitch is zero. Check optical settings.";
@@ -225,38 +286,102 @@ bool prepareGsData(const GSAlgorithm::GSConfig &config,
         return false;
     }
 
-    prepared.initialPhaseRad.resize(pixelCount);
-    switch (config.startingPhaseMask) {
-    case GSAlgorithm::GSStartingPhaseMask::RandomPhase: {
-        std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> phaseDist(-kPiF, kPiF);
-        for (int idx = 0; idx < pixelCount; ++idx) {
-            prepared.initialPhaseRad[idx] = phaseDist(rng);
-        }
-        break;
-    }
-    case GSAlgorithm::GSStartingPhaseMask::BinaryGrating:
-        for (int y = 0; y < config.slmHeight; ++y) {
-            const int rowBase = y * config.slmWidth;
-            for (int x = 0; x < config.slmWidth; ++x) {
-                const int idx = rowBase + x;
-                prepared.initialPhaseRad[idx] = (x % 2 == 0) ? 0.0f : kPiF;
-            }
-        }
-        break;
-    case GSAlgorithm::GSStartingPhaseMask::Checkerboard:
-    default:
-        for (int y = 0; y < config.slmHeight; ++y) {
-            const int rowBase = y * config.slmWidth;
-            for (int x = 0; x < config.slmWidth; ++x) {
-                const int idx = rowBase + x;
-                prepared.initialPhaseRad[idx] = ((x + y) % 2 == 0) ? 0.0f : kPiF;
-            }
-        }
-        break;
+    return initializeGsPhase(config, prepared);
+}
+
+bool prepareGsData(const GSAlgorithm::GSConfig &config,
+                   const QVector<float> &sourceAmplitude,
+                   const GSAlgorithm::GSDenseTargetImage &denseTargetImage,
+                   GSAlgorithm::GSResult &result,
+                   PreparedGsData &prepared) {
+    if (!validateGsInputs(config, sourceAmplitude, result)) {
+        return false;
     }
 
-    return true;
+    if (denseTargetImage.width <= 0 || denseTargetImage.height <= 0) {
+        result.error = "Loaded target image has invalid dimensions.";
+        return false;
+    }
+    if (denseTargetImage.width != config.camWidth || denseTargetImage.height != config.camHeight) {
+        result.error = "Loaded target image must match the current camera resolution before running GS.";
+        return false;
+    }
+    if (denseTargetImage.amplitude.size() != denseTargetImage.width * denseTargetImage.height) {
+        result.error = "Loaded target image amplitude size does not match its dimensions.";
+        return false;
+    }
+
+    const int pixelCount = config.slmWidth * config.slmHeight;
+    prepared.targetAmplitude.fill(0.0f, pixelCount);
+
+    double camDx = 0.0;
+    double camDy = 0.0;
+    double focalDx = 0.0;
+    double focalDy = 0.0;
+    computeGsMappingScales(config, camDx, camDy, focalDx, focalDy);
+
+    if (focalDx == 0.0 || focalDy == 0.0) {
+        result.error = "Computed focal-plane pixel pitch is zero. Check optical settings.";
+        return false;
+    }
+
+    const int cx = config.slmWidth / 2;
+    const int cy = config.slmHeight / 2;
+    float maxAccumulatedAmplitude = 0.0f;
+
+    for (int y = 0; y < denseTargetImage.height; ++y) {
+        const double yCamPx = (static_cast<double>(denseTargetImage.height) / 2.0) - static_cast<double>(y);
+        const double physY = yCamPx * camDy;
+        const int fftOffsetY = static_cast<int>(std::llround(physY / focalDy));
+        const int fftY = cy - fftOffsetY;
+
+        for (int x = 0; x < denseTargetImage.width; ++x) {
+            const int srcIdx = y * denseTargetImage.width + x;
+            const float amplitude = std::clamp(denseTargetImage.amplitude[srcIdx], 0.0f, 1.0f);
+            if (amplitude <= 0.0f) {
+                continue;
+            }
+
+            ++result.requestedTargetCount;
+
+            const double xCamPx = static_cast<double>(x) - (static_cast<double>(denseTargetImage.width) / 2.0);
+            const double physX = xCamPx * camDx;
+            const int fftOffsetX = static_cast<int>(std::llround(physX / focalDx));
+            const int fftX = cx + fftOffsetX;
+
+            if (fftX < 0 || fftX >= config.slmWidth || fftY < 0 || fftY >= config.slmHeight) {
+                ++result.skippedOutsideSlmBounds;
+                continue;
+            }
+
+            const int idx = fftY * config.slmWidth + fftX;
+            const float accumulated = prepared.targetAmplitude[idx] + amplitude;
+            if (prepared.targetAmplitude[idx] == 0.0f) {
+                ++result.usedTargetCount;
+            }
+            prepared.targetAmplitude[idx] = accumulated;
+            if (accumulated > maxAccumulatedAmplitude) {
+                maxAccumulatedAmplitude = accumulated;
+            }
+        }
+    }
+
+    if (result.requestedTargetCount == 0) {
+        result.error = "Loaded target image is empty after grayscale normalization.";
+        return false;
+    }
+    if (result.usedTargetCount == 0 || maxAccumulatedAmplitude <= 0.0f) {
+        result.error = "No valid image target pixels remained after camera/Fourier mapping.";
+        return false;
+    }
+
+    for (float &value : prepared.targetAmplitude) {
+        if (value > 0.0f) {
+            value /= maxAccumulatedAmplitude;
+        }
+    }
+
+    return initializeGsPhase(config, prepared);
 }
 
 void populateResultPhaseImage(const QVector<float> &phaseRad,
@@ -755,6 +880,136 @@ GSResult runGerchbergSaxton(const GSConfig &config,
                 cudaResult.backendUsed = GSComputeBackendUsed::CUDA;
                 cudaResult.backendInfo = QString::fromStdString(nativeResult.backendInfo);
                 
+                QVector<float> phaseOut;
+                phaseOut.reserve(static_cast<int>(nativeResult.phaseOut.size()));
+                for (float v : nativeResult.phaseOut) phaseOut.append(v);
+                populateResultPhaseImage(phaseOut, config.slmWidth, config.slmHeight, cudaResult);
+                return cudaResult;
+            }
+            cudaFailure = QString::fromStdString(nativeResult.error);
+#else
+            cudaFailure = "CUDA GS backend is disabled in this build.";
+#endif
+
+            if (config.computeBackend == GSComputeBackend::CUDA) {
+                GSResult cpuResult = runGerchbergSaxtonCpuInternal(config, sourceAmplitude, prepared, preparedResult);
+                cpuResult.fallbackOccurred = true;
+                cpuResult.fallbackReason = cudaFailure;
+                return cpuResult;
+            }
+        }
+
+        bool openClTried = false;
+        QString openClFailure;
+#if HOT_ENABLE_OPENCL_GS
+        if (config.computeBackend == GSComputeBackend::Auto || config.computeBackend == GSComputeBackend::OpenCL) {
+            openClTried = true;
+            GSResult openClResult = runGerchbergSaxtonOpenClInternal(config, sourceAmplitude, prepared, preparedResult);
+            if (openClResult.success) {
+                if (config.computeBackend == GSComputeBackend::Auto && cudaTried && !cudaFailure.isEmpty()) {
+                    openClResult.fallbackOccurred = true;
+                    openClResult.fallbackReason = QString("CUDA: %1").arg(cudaFailure);
+                }
+                return openClResult;
+            }
+            openClFailure = openClResult.error;
+        }
+#else
+        if (config.computeBackend == GSComputeBackend::Auto || config.computeBackend == GSComputeBackend::OpenCL) {
+            openClTried = true;
+            openClFailure = "OpenCL GS backend is disabled in this build.";
+        }
+#endif
+
+        GSResult cpuResult = runGerchbergSaxtonCpuInternal(config, sourceAmplitude, prepared, preparedResult);
+        if (cudaTried || openClTried) {
+            cpuResult.fallbackOccurred = true;
+            QString fallbackReason;
+            if (cudaTried && !cudaFailure.isEmpty()) {
+                fallbackReason += QString("CUDA: %1").arg(cudaFailure);
+            }
+            if (openClTried && !openClFailure.isEmpty()) {
+                if (!fallbackReason.isEmpty()) {
+                    fallbackReason += " | ";
+                }
+                fallbackReason += QString("OpenCL: %1").arg(openClFailure);
+            }
+            cpuResult.fallbackReason = fallbackReason;
+        }
+        return cpuResult;
+    } catch (const cv::Exception &e) {
+        GSResult fail;
+        fail.success = false;
+        fail.backendUsed = GSComputeBackendUsed::CPU;
+        fail.backendInfo = "CPU (OpenCV DFT)";
+        fail.error = QString("GS execution failed with OpenCV exception: %1").arg(QString::fromStdString(e.what()));
+        return fail;
+    } catch (const std::exception &e) {
+        GSResult fail;
+        fail.success = false;
+        fail.backendUsed = GSComputeBackendUsed::CPU;
+        fail.backendInfo = "CPU (OpenCV DFT)";
+        fail.error = QString("GS execution failed with exception: %1").arg(e.what());
+        return fail;
+    } catch (...) {
+        GSResult fail;
+        fail.success = false;
+        fail.backendUsed = GSComputeBackendUsed::CPU;
+        fail.backendInfo = "CPU (OpenCV DFT)";
+        fail.error = "GS execution failed with unknown exception.";
+        return fail;
+    }
+}
+
+GSResult runGerchbergSaxton(const GSConfig &config,
+                            const QVector<float> &sourceAmplitude,
+                            const GSDenseTargetImage &denseTargetImage) {
+    try {
+        GSResult preparedResult;
+        PreparedGsData prepared;
+        if (!prepareGsData(config, sourceAmplitude, denseTargetImage, preparedResult, prepared)) {
+            preparedResult.backendUsed = GSComputeBackendUsed::CPU;
+            if (preparedResult.backendInfo.isEmpty()) {
+                preparedResult.backendInfo = "CPU (OpenCV DFT)";
+            }
+            return preparedResult;
+        }
+
+        if (config.computeBackend == GSComputeBackend::CPU) {
+            return runGerchbergSaxtonCpuInternal(config, sourceAmplitude, prepared, preparedResult);
+        }
+
+        bool cudaTried = false;
+        QString cudaFailure;
+
+        if (config.computeBackend == GSComputeBackend::Auto || config.computeBackend == GSComputeBackend::CUDA) {
+            cudaTried = true;
+#if HOT_ENABLE_CUDA_GS
+            CudaBackend::GSCudaConfigNative cudaConfig;
+            cudaConfig.slmWidth = config.slmWidth;
+            cudaConfig.slmHeight = config.slmHeight;
+            cudaConfig.iterations = config.iterations;
+            cudaConfig.cudaDeviceIndex = config.cudaDeviceIndex;
+
+            std::vector<float> nativeSourceAmp(sourceAmplitude.size());
+            std::copy(sourceAmplitude.begin(), sourceAmplitude.end(), nativeSourceAmp.begin());
+
+            std::vector<float> nativeTargetAmp(prepared.targetAmplitude.size());
+            std::copy(prepared.targetAmplitude.begin(), prepared.targetAmplitude.end(), nativeTargetAmp.begin());
+
+            std::vector<float> nativeInitialPhase(prepared.initialPhaseRad.size());
+            std::copy(prepared.initialPhaseRad.begin(), prepared.initialPhaseRad.end(), nativeInitialPhase.begin());
+
+            auto nativeResult = CudaBackend::runGerchbergSaxtonCudaNative(cudaConfig,
+                                                                          nativeSourceAmp,
+                                                                          nativeTargetAmp,
+                                                                          nativeInitialPhase);
+            if (nativeResult.success) {
+                GSResult cudaResult = preparedResult;
+                cudaResult.success = true;
+                cudaResult.backendUsed = GSComputeBackendUsed::CUDA;
+                cudaResult.backendInfo = QString::fromStdString(nativeResult.backendInfo);
+
                 QVector<float> phaseOut;
                 phaseOut.reserve(static_cast<int>(nativeResult.phaseOut.size()));
                 for (float v : nativeResult.phaseOut) phaseOut.append(v);

@@ -32,6 +32,13 @@ struct GSTargetPoint {
     double yCamPx = 0.0;
 };
 
+struct GSDenseTargetImage {
+    // Camera-space amplitude map stored row-major. Values are expected in [0, 1].
+    QVector<float> amplitude;
+    int width = 0;
+    int height = 0;
+};
+
 struct GSConfig {
     int slmWidth = 0;
     int slmHeight = 0;
@@ -91,6 +98,9 @@ QVector<GSCudaDeviceInfo> enumerateCudaDevices();
 GSResult runGerchbergSaxton(const GSConfig &config,
                             const QVector<float> &sourceAmplitude,
                             const QVector<GSTargetPoint> &targets);
+GSResult runGerchbergSaxton(const GSConfig &config,
+                            const QVector<float> &sourceAmplitude,
+                            const GSDenseTargetImage &denseTargetImage);
 
 } // namespace GSAlgorithm
 

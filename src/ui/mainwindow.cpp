@@ -637,7 +637,7 @@ void MainWindow::createControls(QGridLayout *layout) {
     imageButtons->addWidget(clearTargetImageBtn);
     imageButtons->addStretch();
 
-    targetImageInfoLabel = new QLabel("No image loaded. Will resize to camera resolution and convert to grayscale.");
+    targetImageInfoLabel = new QLabel("No image loaded. Will resize to camera resolution, convert to grayscale, and use it as a GS image target.");
     targetImageInfoLabel->setWordWrap(true);
     targetImageInfoLabel->setStyleSheet("font-size: 11px;");
 
@@ -1304,7 +1304,7 @@ void MainWindow::openSettingsDialog() {
                 camWidth, camHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
             if (targetImageInfoLabel) {
-                targetImageInfoLabel->setText(QString("Loaded image mapped to camera resolution: %1 x %2 (8-bit grayscale)")
+                targetImageInfoLabel->setText(QString("Loaded image mapped to camera resolution: %1 x %2 (8-bit grayscale, ready for GS mask generation)")
                     .arg(camWidth).arg(camHeight));
             }
 
@@ -1413,6 +1413,55 @@ QVector<float> MainWindow::defaultGsSourceAmplitude() const {
     return GSAlgorithm::buildGaussianSourceAmplitude(slmWidth, slmHeight, defaultWaistPx);
 }
 
+GSAlgorithm::GSConfig MainWindow::buildGsConfig(int iterationsOverride) const {
+    GSAlgorithm::GSConfig config;
+    config.slmWidth = slmWidth;
+    config.slmHeight = slmHeight;
+    config.slmPixelSizeUm = slmPixelSize;
+    config.camWidth = camWidth;
+    config.camHeight = camHeight;
+    config.camPixelSizeUm = camPixelSize;
+    config.cameraImagingMagnification = cameraImagingMagnification;
+    config.wavelengthNm = laserWavelength;
+    config.focalLengthMm = fourierFocalLength;
+    config.iterations = iterationsOverride > 0 ? iterationsOverride : (iterationsSpin ? iterationsSpin->value() : 20);
+
+    switch (gsComputeBackendMode) {
+    case 1:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CPU;
+        break;
+    case 2:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::OpenCL;
+        break;
+    case 3:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::CUDA;
+        break;
+    case 0:
+    default:
+        config.computeBackend = GSAlgorithm::GSComputeBackend::Auto;
+        break;
+    }
+
+    config.openClPlatformIndex = openClPlatformIndex;
+    config.openClDeviceIndex = openClDeviceIndex;
+    config.cudaDeviceIndex = cudaDeviceIndex;
+
+    switch (gsStartingPhaseMaskMode) {
+    case 1:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
+        break;
+    case 2:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::RandomPhase;
+        break;
+    case 0:
+    default:
+        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::Checkerboard;
+        break;
+    }
+
+    return config;
+}
+
 void MainWindow::updateAlgorithmSettingsUi() {
     const bool gsSelected = isGerchbergSaxtonSelected();
     const bool wgsSelected = isWeightedGsSelected();
@@ -1470,7 +1519,11 @@ void MainWindow::scheduleGsAutoRun() {
         return;
     }
 
-    if (gridPointData.isEmpty()) {
+    const bool imageModeReady = targetModeTabs &&
+                                targetModeTabs->currentIndex() == kImageTabIndex &&
+                                !loadedTargetImageGray.isNull() &&
+                                isGerchbergSaxtonSelected();
+    if (gridPointData.isEmpty() && !imageModeReady) {
         gsAutoRunTimer->stop();
         return;
     }
@@ -1517,6 +1570,23 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
             QMessageBox::warning(this, "Algorithm", "Selected algorithm is not supported.");
         }
         return false;
+    }
+
+    const bool imageModeActive = targetModeTabs && targetModeTabs->currentIndex() == kImageTabIndex;
+
+    if (imageModeActive) {
+        if (!isGerchbergSaxtonSelected()) {
+            if (showWarnings) {
+                QMessageBox::warning(this, "Image Target Mode",
+                                     "Image-to-phase-mask conversion currently supports Gerchberg-Saxton only.");
+            }
+            return false;
+        }
+
+        const int expectedSourceSize = slmWidth * slmHeight;
+        const bool usingDefaultSource = sourceIntensityMap.size() != expectedSourceSize;
+        const QVector<float> sourceAmplitude = usingDefaultSource ? defaultGsSourceAmplitude() : sourceIntensityMap;
+        return generateGsMaskFromLoadedImage(showWarnings, trigger, sourceAmplitude, usingDefaultSource);
     }
 
     if (gridPointData.isEmpty()) {
@@ -1590,48 +1660,7 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
         targets.append(target);
     }
 
-    GSAlgorithm::GSConfig config;
-    config.slmWidth = slmWidth;
-    config.slmHeight = slmHeight;
-    config.slmPixelSizeUm = slmPixelSize;
-    config.camWidth = camWidth;
-    config.camHeight = camHeight;
-    config.camPixelSizeUm = camPixelSize;
-    config.cameraImagingMagnification = cameraImagingMagnification;
-    config.wavelengthNm = laserWavelength;
-    config.focalLengthMm = fourierFocalLength;
-    config.iterations = iterationsSpin ? iterationsSpin->value() : 20;
-    switch (gsComputeBackendMode) {
-    case 1:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::CPU;
-        break;
-    case 2:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::OpenCL;
-        break;
-    case 3:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::CUDA;
-        break;
-    case 0:
-    default:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::Auto;
-        break;
-    }
-    config.openClPlatformIndex = openClPlatformIndex;
-    config.openClDeviceIndex = openClDeviceIndex;
-    config.cudaDeviceIndex = cudaDeviceIndex;
-
-    switch (gsStartingPhaseMaskMode) {
-    case 1:
-        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
-        break;
-    case 2:
-        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::RandomPhase;
-        break;
-    case 0:
-    default:
-        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::Checkerboard;
-        break;
-    }
+    GSAlgorithm::GSConfig config = buildGsConfig();
 
 #if HOT_ENABLE_TEMP_GS_PROFILING
     QElapsedTimer gsTimer;
@@ -1731,6 +1760,138 @@ bool MainWindow::generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger) 
     return true;
 }
 
+bool MainWindow::generateGsMaskFromLoadedImage(bool showWarnings,
+                                               GsRunTrigger trigger,
+                                               const QVector<float> &sourceAmplitude,
+                                               bool usingDefaultSource) {
+    if (loadedTargetImageGray.isNull()) {
+        if (showWarnings) {
+            QMessageBox::warning(this, "Image Target Mode",
+                                 "No image is loaded. Load an image in the Image tab before generating a GS mask.");
+        }
+        return false;
+    }
+
+    GSAlgorithm::GSDenseTargetImage denseTarget;
+    denseTarget.width = loadedTargetImageGray.width();
+    denseTarget.height = loadedTargetImageGray.height();
+    denseTarget.amplitude.resize(denseTarget.width * denseTarget.height);
+
+    for (int y = 0; y < denseTarget.height; ++y) {
+        const uchar *row = loadedTargetImageGray.constScanLine(y);
+        const int rowBase = y * denseTarget.width;
+        for (int x = 0; x < denseTarget.width; ++x) {
+            denseTarget.amplitude[rowBase + x] = static_cast<float>(row[x]) / 255.0f;
+        }
+    }
+
+    GSAlgorithm::GSConfig config = buildGsConfig();
+
+#if HOT_ENABLE_TEMP_GS_PROFILING
+    QElapsedTimer gsTimer;
+    gsTimer.start();
+#endif
+
+    const GSAlgorithm::GSResult result = GSAlgorithm::runGerchbergSaxton(config, sourceAmplitude, denseTarget);
+
+#if HOT_ENABLE_TEMP_GS_PROFILING
+    const qint64 elapsedMs = gsTimer.elapsed();
+    const double msPerIteration = config.iterations > 0
+        ? static_cast<double>(elapsedMs) / static_cast<double>(config.iterations)
+        : 0.0;
+    const QString triggerLabel = [trigger]() {
+        switch (trigger) {
+        case GsRunTrigger::ManualButton:
+            return QString("manual_button");
+        case GsRunTrigger::AutoRunTimer:
+            return QString("auto_run_timer");
+        case GsRunTrigger::SendToSlmPreRun:
+            return QString("send_to_slm_pre_run");
+        default:
+            return QString("unknown");
+        }
+    }();
+
+    if (trigger == GsRunTrigger::ManualButton) {
+        appendGsRuntimeLogEntry(triggerLabel,
+                                targetModeLabelFromIndex(targetModeTabs ? targetModeTabs->currentIndex() : -1),
+                                lastGeneratedPatternSummary,
+                                QString("image_target_pixels=%1x%2").arg(denseTarget.width).arg(denseTarget.height),
+                                result.success,
+                                result.error,
+                                elapsedMs,
+                                msPerIteration,
+                                config,
+                                result,
+                                usingDefaultSource,
+                                sourcePresetName,
+                                sourceBeamWaistPx,
+                                result.requestedTargetCount);
+    }
+#endif
+
+    if (!result.success) {
+        if (showWarnings) {
+            QMessageBox::warning(this, "GS Algorithm", result.error);
+        }
+        return false;
+    }
+
+    currentMask = result.phaseMask8Bit.convertToFormat(QImage::Format_Grayscale8);
+    if (currentMask.size() != QSize(slmWidth, slmHeight)) {
+        currentMask = currentMask.scaled(slmWidth, slmHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    updatePhasePreview();
+
+    const QString sourceMsg = usingDefaultSource
+        ? "Default Gaussian source used"
+        : "Source Intensity map used";
+    QString backendUsed = "CPU";
+    switch (result.backendUsed) {
+    case GSAlgorithm::GSComputeBackendUsed::CUDA:
+        backendUsed = "CUDA";
+        break;
+    case GSAlgorithm::GSComputeBackendUsed::OpenCL:
+        backendUsed = "OpenCL";
+        break;
+    case GSAlgorithm::GSComputeBackendUsed::CPU:
+    default:
+        backendUsed = "CPU";
+        break;
+    }
+
+    QString statusMessage = QString("GS mask generated from image (%1 iterations, %2 active pixels mapped, %3, backend: %4).")
+                                .arg(config.iterations)
+                                .arg(result.usedTargetCount)
+                                .arg(sourceMsg)
+                                .arg(backendUsed);
+    if (!result.backendInfo.isEmpty()) {
+        statusMessage += QString(" Device: %1.").arg(result.backendInfo);
+    }
+    if (result.fallbackOccurred && !result.fallbackReason.isEmpty()) {
+        statusMessage += QString(" Auto-fallback: %1.").arg(result.fallbackReason);
+    }
+#if HOT_ENABLE_TEMP_GS_PROFILING
+    if (trigger == GsRunTrigger::ManualButton) {
+        statusMessage += QString(" Runtime: %1 ms (%2 ms/iter).")
+            .arg(elapsedMs)
+            .arg(msPerIteration, 0, 'f', 3);
+    }
+#endif
+    statusBar()->showMessage(statusMessage, 5000);
+
+    if (targetImageInfoLabel) {
+        targetImageInfoLabel->setText(QString("Loaded image ready: %1 x %2 grayscale. Last GS mask used %3 active mapped pixels.")
+                                          .arg(denseTarget.width)
+                                          .arg(denseTarget.height)
+                                          .arg(result.usedTargetCount));
+    }
+
+    autoSendToSlmIfEnabled();
+    return true;
+}
+
 bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
                                       int iterationsOverride,
                                       QImage &outMask,
@@ -1762,48 +1923,7 @@ bool MainWindow::runGsForTargetPoints(const QVector<QPointF> &points,
         targets.append(target);
     }
 
-    GSAlgorithm::GSConfig config;
-    config.slmWidth = slmWidth;
-    config.slmHeight = slmHeight;
-    config.slmPixelSizeUm = slmPixelSize;
-    config.camWidth = camWidth;
-    config.camHeight = camHeight;
-    config.camPixelSizeUm = camPixelSize;
-    config.cameraImagingMagnification = cameraImagingMagnification;
-    config.wavelengthNm = laserWavelength;
-    config.focalLengthMm = fourierFocalLength;
-    config.iterations = qMax(1, iterationsOverride);
-    switch (gsComputeBackendMode) {
-    case 1:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::CPU;
-        break;
-    case 2:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::OpenCL;
-        break;
-    case 3:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::CUDA;
-        break;
-    case 0:
-    default:
-        config.computeBackend = GSAlgorithm::GSComputeBackend::Auto;
-        break;
-    }
-    config.openClPlatformIndex = openClPlatformIndex;
-    config.openClDeviceIndex = openClDeviceIndex;
-    config.cudaDeviceIndex = cudaDeviceIndex;
-
-    switch (gsStartingPhaseMaskMode) {
-    case 1:
-        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::BinaryGrating;
-        break;
-    case 2:
-        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::RandomPhase;
-        break;
-    case 0:
-    default:
-        config.startingPhaseMask = GSAlgorithm::GSStartingPhaseMask::Checkerboard;
-        break;
-    }
+    GSAlgorithm::GSConfig config = buildGsConfig(qMax(1, iterationsOverride));
 
     const GSAlgorithm::GSResult result = GSAlgorithm::runGerchbergSaxton(config, sourceAmplitude, targets);
     if (!result.success) {
@@ -1981,7 +2101,11 @@ void MainWindow::removeLastCreatedPointByKeyboard() {
         }
     }
 
-    if (gridPointData.isEmpty()) {
+    const bool imageModeReady = targetModeTabs &&
+                                targetModeTabs->currentIndex() == kImageTabIndex &&
+                                !loadedTargetImageGray.isNull() &&
+                                isGerchbergSaxtonSelected();
+    if (gridPointData.isEmpty() && !imageModeReady) {
         return;
     }
 
@@ -1998,7 +2122,12 @@ void MainWindow::removeLastCreatedPointByKeyboard() {
 }
 
 void MainWindow::onSendToSlmRequested() {
-    if (isAutoMaskGenerationAlgorithmSelected() && !gridPointData.isEmpty()) {
+    const bool shouldGenerateFromImage = isAutoMaskGenerationAlgorithmSelected() &&
+                                         targetModeTabs &&
+                                         targetModeTabs->currentIndex() == kImageTabIndex &&
+                                         !loadedTargetImageGray.isNull() &&
+                                         isGerchbergSaxtonSelected();
+    if ((isAutoMaskGenerationAlgorithmSelected() && !gridPointData.isEmpty()) || shouldGenerateFromImage) {
         if (!generateAlgorithmMask(true, GsRunTrigger::SendToSlmPreRun)) {
             return;
         }
@@ -2086,7 +2215,7 @@ void MainWindow::loadTargetImage() {
         camWidth, camHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
 
     clearTargetImageBtn->setEnabled(true);
-    targetImageInfoLabel->setText(QString("%1 -> %2 x %3 (8-bit grayscale)")
+    targetImageInfoLabel->setText(QString("%1 -> %2 x %3 (8-bit grayscale, ready for GS mask generation)")
         .arg(QFileInfo(fileName).fileName())
         .arg(camWidth)
         .arg(camHeight));
@@ -2096,7 +2225,7 @@ void MainWindow::loadTargetImage() {
         targetGridWidget->setDisplayMode(TargetGridWidget::DisplayMode::StaticImage);
     }
 
-    statusBar()->showMessage("Target image loaded and converted to camera-sized grayscale.", 4000);
+    statusBar()->showMessage("Target image loaded, resized to camera resolution, and ready for GS mask generation.", 4000);
 }
 
 void MainWindow::clearTargetImage() {
@@ -2104,7 +2233,7 @@ void MainWindow::clearTargetImage() {
     loadedTargetImageGray = QImage();
 
     clearTargetImageBtn->setEnabled(false);
-    targetImageInfoLabel->setText("No image loaded. Will resize to camera resolution and convert to grayscale.");
+    targetImageInfoLabel->setText("No image loaded. Will resize to camera resolution, convert to grayscale, and use it as a GS image target.");
 
     targetGridWidget->clearBackgroundImage();
     if (targetModeTabs->currentIndex() == kImageTabIndex) {

@@ -6,6 +6,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QGroupBox>
+#include <algorithm>
 #include <cmath> // Needed for sin, cos, and fmod
 
 // M_PI is sometimes not defined by default in standard C++ math
@@ -30,7 +31,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     QFormLayout *form = new QFormLayout();
     
     patternTypeCombo = new QComboBox();
-    patternTypeCombo->addItems({"Blazed Grating (Prism)", "Binary Grating", "Fresnel Lens", "Axicon", "Vortex Beam", "Sinusoidal Grating", "Checkerboard"});
+    patternTypeCombo->addItems({"Blazed Grating (Prism)", "Binary Grating", "Fresnel Lens", "Axicon", "Vortex Beam", "Sinusoidal Grating", "Checkerboard", "Four-Quadrant Phase Mask", "Recursive Quadrant Spiral Mask"});
     
     periodSpin = new ArrowDoubleSpinBox();
     periodSpin->setRange(2.0, 1000.0);
@@ -61,6 +62,20 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     amplitudeSpin->setRange(0.0, 1.0);
     amplitudeSpin->setValue(0.5);
     amplitudeSpin->setSingleStep(0.1);
+
+    depthSpin = new ArrowSpinBox();
+    depthSpin->setRange(1, 32);
+    depthSpin->setValue(3);
+
+    xOffsetSpin = new ArrowSpinBox();
+    xOffsetSpin->setRange(-targetWidth, targetWidth);
+    xOffsetSpin->setValue(0);
+    xOffsetSpin->setSuffix(" px");
+
+    yOffsetSpin = new ArrowSpinBox();
+    yOffsetSpin->setRange(-targetHeight, targetHeight);
+    yOffsetSpin->setValue(0);
+    yOffsetSpin->setSuffix(" px");
     
     invertPhaseCheck = new QCheckBox("Invert Phase");
     
@@ -71,6 +86,9 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     form->addRow("Radial Period:", radialPeriodSpin);
     form->addRow("Topological Charge:", topologicalChargeSpin);
     form->addRow("Amplitude:", amplitudeSpin);
+    form->addRow("Depth:", depthSpin);
+    form->addRow("X Offset:", xOffsetSpin);
+    form->addRow("Y Offset:", yOffsetSpin);
     form->addRow(invertPhaseCheck);
     settingsGroup->setLayout(form);
     
@@ -152,6 +170,12 @@ void HologramDialog::generatePattern() {
     // Pattern centering coordinates
     double centerX = targetWidth / 2.0;
     double centerY = targetHeight / 2.0;
+    if (type == 7 || type == 8) {
+        centerX += xOffsetSpin->value();
+        centerY += yOffsetSpin->value();
+    }
+
+    const int spiralDepth = depthSpin->value();
 
     // Iterate through every pixel of the SLM
     for (int y = 0; y < targetHeight; ++y) {
@@ -229,6 +253,43 @@ void HologramDialog::generatePattern() {
                 // (checkerX + checkerY) % 2 == 0 is slightly problematic with negative numbers 
                 // in C++ (% can return negative). Use bitwise check for even/odd parity.
                 row[x] = ((std::abs(checkerX + checkerY) % 2) == 0) ? 0 : 128;
+            } else if (type == 7) {
+                // 8. FOUR-QUADRANT PHASE MASK
+                // Using image-style quadrant numbering:
+                // Q1 = top-left (0), Q2 = top-right (pi), Q3 = bottom-left (pi), Q4 = bottom-right (0)
+                const bool leftHalf = x < centerX;
+                const bool topHalf = y < centerY;
+                const bool isPiQuadrant = (!leftHalf && topHalf) || (leftHalf && !topHalf);
+                row[x] = isPiQuadrant ? 128 : 0;
+            } else if (type == 8) {
+                // 9. RECURSIVE QUADRANT SPIRAL MASK
+                // Apply the same 0/pi, pi/0 quadrant map recursively inside the current bottom-right quadrant.
+                double left = 0.0;
+                double top = 0.0;
+                double right = static_cast<double>(targetWidth);
+                double bottom = static_cast<double>(targetHeight);
+                double splitX = centerX;
+                double splitY = centerY;
+                uchar pixelValue = 0;
+
+                for (int level = 0; level < spiralDepth; ++level) {
+                    const bool leftHalf = x < splitX;
+                    const bool topHalf = y < splitY;
+                    const bool isPiQuadrant = (!leftHalf && topHalf) || (leftHalf && !topHalf);
+                    pixelValue = isPiQuadrant ? 128 : 0;
+
+                    const bool inFourthQuadrant = !leftHalf && !topHalf;
+                    if (!inFourthQuadrant || level == spiralDepth - 1) {
+                        break;
+                    }
+
+                    left = std::clamp(splitX, left, right);
+                    top = std::clamp(splitY, top, bottom);
+                    splitX = left + ((right - left) / 2.0);
+                    splitY = top + ((bottom - top) / 2.0);
+                }
+
+                row[x] = pixelValue;
             }
         }
     }
@@ -282,6 +343,9 @@ void HologramDialog::updateParameterVisibility() {
     radialPeriodSpin->setVisible(false);
     topologicalChargeSpin->setVisible(false);
     amplitudeSpin->setVisible(false);
+    depthSpin->setVisible(false);
+    xOffsetSpin->setVisible(false);
+    yOffsetSpin->setVisible(false);
     invertPhaseCheck->setVisible(false);
     
     // Show relevant parameters based on pattern type
@@ -310,6 +374,15 @@ void HologramDialog::updateParameterVisibility() {
         case 6: // Checkerboard
             periodSpin->setVisible(true);
             angleSpin->setVisible(true);
+            break;
+        case 7: // Four-Quadrant Phase Mask
+            xOffsetSpin->setVisible(true);
+            yOffsetSpin->setVisible(true);
+            break;
+        case 8: // Recursive Quadrant Spiral Mask
+            depthSpin->setVisible(true);
+            xOffsetSpin->setVisible(true);
+            yOffsetSpin->setVisible(true);
             break;
     }
 }

@@ -38,6 +38,9 @@ class TargetGridWidget;
 class PatternPresetsWidget;
 class PythonCodeEditor;
 class PythonTrapScriptEngine;
+namespace GSAlgorithm {
+struct GSConfig;
+}
 
 // --- DLL Function Pointers (Bypasses the need for LabVIEW's extcode.h) ---
 typedef void (__stdcall *Window_Settings_Func)(int32_t MonitorNumber, int32_t WindowNumber015, int32_t XPixelShift, int32_t YPixelShift);
@@ -195,12 +198,17 @@ private:
     void scheduleGsAutoRun();
     void autoSendToSlmIfEnabled();
     bool generateAlgorithmMask(bool showWarnings, GsRunTrigger trigger);
+    bool generateGsMaskFromLoadedImage(bool showWarnings,
+                                       GsRunTrigger trigger,
+                                       const QVector<float> &sourceAmplitude,
+                                       bool usingDefaultSource);
     QVector<float> defaultGsSourceAmplitude() const;
     bool isGerchbergSaxtonSelected() const;
     bool isWeightedGsSelected() const;
     bool isRandomMaskEncodingSelected() const;
     bool isAutoMaskGenerationAlgorithmSelected() const;
     bool runGsForTargetPoints(const QVector<QPointF> &points, int iterationsOverride, QImage &outMask, QString *errorOut = nullptr);
+    GSAlgorithm::GSConfig buildGsConfig(int iterationsOverride = -1) const;
     void updateAnimationControlsEnabledState();
     void updateAnimationPreviewLabels(const QVector<QPointF> &points);
     QImage buildAnimationPreviewImage(const QVector<QPointF> &points, bool cameraStyle, int highlightIndexOneBased = -1) const;
