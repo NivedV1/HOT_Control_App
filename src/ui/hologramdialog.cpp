@@ -3,6 +3,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QGroupBox>
@@ -14,8 +15,8 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
-    : QDialog(parent), targetWidth(slmWidth), targetHeight(slmHeight) {
+HologramDialog::HologramDialog(int slmWidth, int slmHeight, bool liveAutoModeEnabled, QWidget *parent)
+    : QDialog(parent), targetWidth(slmWidth), targetHeight(slmHeight), liveAutoMode(liveAutoModeEnabled) {
     
     setWindowTitle("Standard Phase Pattern Generator");
     resize(800, 500); 
@@ -98,11 +99,75 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     // Connect pattern type change to parameter visibility update
     connect(patternTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &HologramDialog::updateParameterVisibility);
     
+    QGroupBox *stackGroup = new QGroupBox("Mask Stack");
+    QVBoxLayout *stackLayout = new QVBoxLayout();
+    stackLayout->setContentsMargins(6, 6, 6, 6);
+    stackLayout->setSpacing(4);
+    stackGroup->setMaximumHeight(210);
+
+    auto configureSlotPreview = [](QLabel *label) {
+        label->setFixedSize(44, 44);
+        label->setAlignment(Qt::AlignCenter);
+        label->setStyleSheet("background-color: #101010; border: 1px solid #555;");
+        label->setText("Empty");
+    };
+
+    slot1PreviewLabel = new QLabel();
+    slot2PreviewLabel = new QLabel();
+    slot3PreviewLabel = new QLabel();
+    configureSlotPreview(slot1PreviewLabel);
+    configureSlotPreview(slot2PreviewLabel);
+    configureSlotPreview(slot3PreviewLabel);
+
+    slot1StatusLabel = new QLabel("S1: Empty");
+    slot2StatusLabel = new QLabel("S2: Empty");
+    slot3StatusLabel = new QLabel("S3: Empty");
+
+    addToSlot1Btn = new QPushButton("Add S1");
+    addToSlot2Btn = new QPushButton("Add S2");
+    addToSlot3Btn = new QPushButton("Add S3");
+    clearSlot1Btn = new QPushButton("Clr S1");
+    clearSlot2Btn = new QPushButton("Clr S2");
+    clearSlot3Btn = new QPushButton("Clr S3");
+    clearAllSlotsBtn = new QPushButton("Clear All");
+
+    connect(addToSlot1Btn, &QPushButton::clicked, this, &HologramDialog::addMaskToSlot1);
+    connect(addToSlot2Btn, &QPushButton::clicked, this, &HologramDialog::addMaskToSlot2);
+    connect(addToSlot3Btn, &QPushButton::clicked, this, &HologramDialog::addMaskToSlot3);
+    connect(clearSlot1Btn, &QPushButton::clicked, this, &HologramDialog::clearMaskSlot1);
+    connect(clearSlot2Btn, &QPushButton::clicked, this, &HologramDialog::clearMaskSlot2);
+    connect(clearSlot3Btn, &QPushButton::clicked, this, &HologramDialog::clearMaskSlot3);
+    connect(clearAllSlotsBtn, &QPushButton::clicked, this, &HologramDialog::clearAllMaskSlots);
+
+    QGridLayout *slotGrid = new QGridLayout();
+    slotGrid->setContentsMargins(0, 0, 0, 0);
+    slotGrid->setHorizontalSpacing(4);
+    slotGrid->setVerticalSpacing(3);
+    slotGrid->addWidget(slot1PreviewLabel, 0, 0);
+    slotGrid->addWidget(slot1StatusLabel, 0, 1);
+    slotGrid->addWidget(addToSlot1Btn, 0, 2);
+    slotGrid->addWidget(clearSlot1Btn, 0, 3);
+
+    slotGrid->addWidget(slot2PreviewLabel, 1, 0);
+    slotGrid->addWidget(slot2StatusLabel, 1, 1);
+    slotGrid->addWidget(addToSlot2Btn, 1, 2);
+    slotGrid->addWidget(clearSlot2Btn, 1, 3);
+
+    slotGrid->addWidget(slot3PreviewLabel, 2, 0);
+    slotGrid->addWidget(slot3StatusLabel, 2, 1);
+    slotGrid->addWidget(addToSlot3Btn, 2, 2);
+    slotGrid->addWidget(clearSlot3Btn, 2, 3);
+
+    stackLayout->addLayout(slotGrid);
+    stackLayout->addWidget(clearAllSlotsBtn);
+    stackGroup->setLayout(stackLayout);
+
     generateBtn = new QPushButton("Generate Phase Mask");
     generateBtn->setStyleSheet("QPushButton { font-weight: bold; padding: 10px; background-color: #2b5c8f; color: white; }");
     connect(generateBtn, &QPushButton::clicked, this, &HologramDialog::generatePattern);
     
     leftLayout->addWidget(settingsGroup);
+    leftLayout->addWidget(stackGroup);
     leftLayout->addWidget(generateBtn);
     leftLayout->addStretch(); // Keeps controls packed neatly at the top
 
@@ -121,8 +186,8 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     phasePreview->setStyleSheet("background-color: black; border: 1px solid #555;");
     phasePreview->setMinimumSize(350, 350);
     phasePreview->setScaledContents(true);
-    
-    // --- NEW: Button Layout ---
+
+    // --- Output Button Layout ---
     QHBoxLayout *buttonLayout = new QHBoxLayout();
     
     saveBtn = new QPushButton("Save Mask As...");
@@ -150,6 +215,19 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
     // Give the right column a ratio of 2 so it takes up more space than the controls
     mainLayout->addLayout(leftLayout, 1);
     mainLayout->addLayout(rightLayout, 2); 
+
+    autoGenerateTimer = new QTimer(this);
+    autoGenerateTimer->setSingleShot(true);
+    autoGenerateTimer->setInterval(120);
+    connect(autoGenerateTimer, &QTimer::timeout, this, &HologramDialog::onAutoGenerateTimeout);
+
+    if (liveAutoMode) {
+        connectAutoGenerateSignals();
+        scheduleAutoGenerate();
+    }
+
+    updateStackIndicatorUi();
+    updateOutputPreview();
 }
 
 // ==========================================
@@ -157,7 +235,7 @@ HologramDialog::HologramDialog(int slmWidth, int slmHeight, QWidget *parent)
 // ==========================================
 void HologramDialog::generatePattern() {
     // Create a blank 8-bit grayscale image matched to your SLM resolution
-    currentPhaseImage = QImage(targetWidth, targetHeight, QImage::Format_Grayscale8);
+    generatedMask = QImage(targetWidth, targetHeight, QImage::Format_Grayscale8);
     
     int type = patternTypeCombo->currentIndex();
     double period = periodSpin->value();
@@ -179,7 +257,7 @@ void HologramDialog::generatePattern() {
 
     // Iterate through every pixel of the SLM
     for (int y = 0; y < targetHeight; ++y) {
-        uchar *row = currentPhaseImage.scanLine(y);
+        uchar *row = generatedMask.scanLine(y);
         for (int x = 0; x < targetWidth; ++x) {
             
             // Calculate rotated projection distance for 1D gratings
@@ -294,19 +372,25 @@ void HologramDialog::generatePattern() {
         }
     }
 
-    // Update the UI
-    phasePreview->setPixmap(QPixmap::fromImage(currentPhaseImage));
-    saveBtn->setEnabled(true);
-    sendToMainBtn->setEnabled(true); // --- NEW: Enable the Load button ---
-    sendToSLMBtn->setEnabled(true); // --- NEW: Enable the Send to SLM button ---
+    updateOutputPreview();
+
+    if (liveAutoMode) {
+        // Keep using MainWindow's existing receiveHologram() path so global auto-send
+        // logic and SLM safety checks remain centralized in one place.
+        const QImage output = effectiveOutputMask();
+        if (!output.isNull()) {
+            emit maskReadyToLoad(output);
+        }
+    }
 }
 
 void HologramDialog::saveHologram() {
-    if (currentPhaseImage.isNull()) return;
+    const QImage output = effectiveOutputMask();
+    if (output.isNull()) return;
 
-    QString fileName = QFileDialog::getSaveFileName(this, "Save Phase Mask", "Grating_Mask.bmp", "Images (*.png *.bmp)");
+    QString fileName = QFileDialog::getSaveFileName(this, "Save Phase Mask", "Combined_Mask.bmp", "Images (*.png *.bmp)");
     if (!fileName.isEmpty()) {
-        currentPhaseImage.save(fileName);
+        output.save(fileName);
         QMessageBox::information(this, "Success", "Phase mask saved successfully.");
     } 
 }
@@ -315,8 +399,9 @@ void HologramDialog::saveHologram() {
 // NEW: BROADCAST TO MAIN WINDOW
 // ==========================================
 void HologramDialog::sendToMain() {
-    if (!currentPhaseImage.isNull()) {
-        emit maskReadyToLoad(currentPhaseImage); // Send the image data out
+    const QImage output = effectiveOutputMask();
+    if (!output.isNull()) {
+        emit maskReadyToLoad(output); // Send the image data out
         accept(); // Close the dialog
     }
 }
@@ -325,8 +410,9 @@ void HologramDialog::sendToMain() {
 // NEW: SEND DIRECTLY TO SLM
 // ==========================================
 void HologramDialog::sendToSLM() {
-    if (!currentPhaseImage.isNull()) {
-        emit sendToSLMRequested(currentPhaseImage); // Send the image data to SLM
+    const QImage output = effectiveOutputMask();
+    if (!output.isNull()) {
+        emit sendToSLMRequested(output); // Send the image data to SLM
     }
 }
 
@@ -385,5 +471,208 @@ void HologramDialog::updateParameterVisibility() {
             yOffsetSpin->setVisible(true);
             break;
     }
+}
+
+void HologramDialog::connectAutoGenerateSignals() {
+    connect(patternTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(periodSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(angleSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(focalLengthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(radialPeriodSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(topologicalChargeSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(amplitudeSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(depthSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(xOffsetSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(yOffsetSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, &HologramDialog::scheduleAutoGenerate);
+    connect(invertPhaseCheck, &QCheckBox::toggled, this, &HologramDialog::scheduleAutoGenerate);
+}
+
+void HologramDialog::scheduleAutoGenerate() {
+    if (!liveAutoMode || !autoGenerateTimer) {
+        return;
+    }
+    autoGenerateTimer->start();
+}
+
+void HologramDialog::onAutoGenerateTimeout() {
+    if (!liveAutoMode) {
+        return;
+    }
+    generatePattern();
+}
+
+void HologramDialog::addMaskToSlot1() {
+    commitGeneratedToSlot(0);
+}
+
+void HologramDialog::addMaskToSlot2() {
+    commitGeneratedToSlot(1);
+}
+
+void HologramDialog::addMaskToSlot3() {
+    commitGeneratedToSlot(2);
+}
+
+void HologramDialog::clearMaskSlot1() {
+    clearSlot(0);
+}
+
+void HologramDialog::clearMaskSlot2() {
+    clearSlot(1);
+}
+
+void HologramDialog::clearMaskSlot3() {
+    clearSlot(2);
+}
+
+void HologramDialog::clearAllMaskSlots() {
+    for (int i = 0; i < 3; ++i) {
+        stackSlots[i] = QImage();
+        slotFilled[i] = false;
+    }
+    combinedStackMask = composeStackMask();
+    updateStackIndicatorUi();
+    updateOutputPreview();
+
+    if (liveAutoMode) {
+        const QImage output = effectiveOutputMask();
+        if (!output.isNull()) {
+            emit maskReadyToLoad(output);
+        }
+    }
+}
+
+QImage HologramDialog::composeStackMask() const {
+    bool hasAnySlot = false;
+    for (int i = 0; i < 3; ++i) {
+        if (slotFilled[i] && !stackSlots[i].isNull()) {
+            hasAnySlot = true;
+            break;
+        }
+    }
+    if (!hasAnySlot) {
+        return QImage();
+    }
+
+    QImage result(targetWidth, targetHeight, QImage::Format_Grayscale8);
+    result.fill(0);
+
+    for (int i = 0; i < 3; ++i) {
+        if (!slotFilled[i] || stackSlots[i].isNull()) {
+            continue;
+        }
+
+        QImage slotImage = stackSlots[i].convertToFormat(QImage::Format_Grayscale8);
+        if (slotImage.size() != result.size()) {
+            slotImage = slotImage.scaled(result.size());
+        }
+
+        for (int y = 0; y < result.height(); ++y) {
+            uchar *dstRow = result.scanLine(y);
+            const uchar *srcRow = slotImage.constScanLine(y);
+            for (int x = 0; x < result.width(); ++x) {
+                dstRow[x] = static_cast<uchar>(dstRow[x] + srcRow[x]);
+            }
+        }
+    }
+
+    return result;
+}
+
+QImage HologramDialog::effectiveOutputMask() const {
+    if (!combinedStackMask.isNull()) {
+        return combinedStackMask;
+    }
+    return generatedMask;
+}
+
+void HologramDialog::updateStackIndicatorUi() {
+    QLabel *statusLabels[3] = {slot1StatusLabel, slot2StatusLabel, slot3StatusLabel};
+    QLabel *previewLabels[3] = {slot1PreviewLabel, slot2PreviewLabel, slot3PreviewLabel};
+    QPushButton *clearButtons[3] = {clearSlot1Btn, clearSlot2Btn, clearSlot3Btn};
+
+    bool anyFilled = false;
+    for (int i = 0; i < 3; ++i) {
+        if (slotFilled[i] && !stackSlots[i].isNull()) {
+            anyFilled = true;
+            statusLabels[i]->setText(QString("S%1: Filled").arg(i + 1));
+            previewLabels[i]->setText("");
+            previewLabels[i]->setPixmap(QPixmap::fromImage(stackSlots[i]).scaled(
+                previewLabels[i]->size(),
+                Qt::IgnoreAspectRatio,
+                Qt::SmoothTransformation));
+            clearButtons[i]->setEnabled(true);
+        } else {
+            slotFilled[i] = false;
+            statusLabels[i]->setText(QString("S%1: Empty").arg(i + 1));
+            previewLabels[i]->setPixmap(QPixmap());
+            previewLabels[i]->setText("Empty");
+            clearButtons[i]->setEnabled(false);
+        }
+    }
+
+    clearAllSlotsBtn->setEnabled(anyFilled);
+}
+
+void HologramDialog::commitGeneratedToSlot(int slotIndex) {
+    if (slotIndex < 0 || slotIndex >= 3) {
+        return;
+    }
+    if (generatedMask.isNull()) {
+        QMessageBox::warning(this, "No Mask", "Generate a phase mask before adding to a slot.");
+        return;
+    }
+
+    stackSlots[slotIndex] = generatedMask.copy();
+    slotFilled[slotIndex] = true;
+    combinedStackMask = composeStackMask();
+    updateStackIndicatorUi();
+    updateOutputPreview();
+
+    if (liveAutoMode) {
+        const QImage output = effectiveOutputMask();
+        if (!output.isNull()) {
+            emit maskReadyToLoad(output);
+        }
+    }
+}
+
+void HologramDialog::clearSlot(int slotIndex) {
+    if (slotIndex < 0 || slotIndex >= 3) {
+        return;
+    }
+
+    stackSlots[slotIndex] = QImage();
+    slotFilled[slotIndex] = false;
+    combinedStackMask = composeStackMask();
+    updateStackIndicatorUi();
+    updateOutputPreview();
+
+    if (liveAutoMode) {
+        const QImage output = effectiveOutputMask();
+        if (!output.isNull()) {
+            emit maskReadyToLoad(output);
+        }
+    }
+}
+
+void HologramDialog::updateOutputPreview() {
+    combinedStackMask = composeStackMask();
+    const QImage output = effectiveOutputMask();
+
+    if (output.isNull()) {
+        phasePreview->setPixmap(QPixmap());
+        phasePreview->setText("Click Generate");
+        saveBtn->setEnabled(false);
+        sendToMainBtn->setEnabled(false);
+        sendToSLMBtn->setEnabled(false);
+        return;
+    }
+
+    phasePreview->setText("");
+    phasePreview->setPixmap(QPixmap::fromImage(output));
+    saveBtn->setEnabled(true);
+    sendToMainBtn->setEnabled(true);
+    sendToSLMBtn->setEnabled(true);
 }
 

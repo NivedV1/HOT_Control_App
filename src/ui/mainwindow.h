@@ -34,6 +34,8 @@ class QWidget;
 class QStackedWidget;
 class QScrollArea;
 class QPlainTextEdit;
+class QDialog;
+class QSlider;
 class TargetGridWidget;
 class PatternPresetsWidget;
 class PythonCodeEditor;
@@ -234,6 +236,16 @@ private:
     void removePointRowFromTables(int pointId);
     void selectPointRowInTables(int pointId);
     void clearPointTableSelections();
+    bool loadPhaseFramesFromVideo(const QString &filePath, QVector<QImage> &outFrames, QString &errorOut) const;
+    bool loadPhaseFramesFromFolder(const QString &folderPath, QVector<QImage> &outFrames, QString &errorOut) const;
+    QImage normalizePhaseMaskFrame(const QImage &frame) const;
+    void ensurePhaseMediaDialog();
+    void updatePhaseMediaPreviewLabel();
+    void updatePhaseMediaFrameUi();
+    void setPhaseMediaPlaying(bool playing);
+    void showPhaseMediaFrame(int frameIndex, bool sendWhenEnabled);
+    void stopPhaseMediaPlayback(bool resetToFirstFrame);
+    void onPhaseMediaTimerTimeout();
 
     // UI Pointers
     TargetGridWidget *targetGridWidget;
@@ -389,6 +401,7 @@ private:
     // Auto-run timer
     QTimer *gsAutoRunTimer = nullptr;
     QTimer *animationTimer = nullptr;
+    QTimer *phaseMediaTimer = nullptr;
     QVector<QVector<QPointF>> animationFramePoints;
     QVector<QImage> animationPrecomputedMasks;
     int animationCurrentFrameIndex = 0;
@@ -398,6 +411,19 @@ private:
     bool animationRealtimeRunning = false;
     bool animationPlaybackRunning = false;
     bool animationComputeLimitedWarned = false;
+    QVector<QImage> phaseMediaFrames;
+    int phaseMediaFrameIndex = 0;
+    bool phaseMediaPlaying = false;
+    bool phaseMediaFrameSliderChanging = false;
+    QString phaseMediaSourceLabel;
+    QDialog *phaseMediaDialog = nullptr;
+    QLabel *phaseMediaDialogPreviewLabel = nullptr;
+    QPushButton *phaseMediaPlayPauseBtn = nullptr;
+    QPushButton *phaseMediaStopBtn = nullptr;
+    QSpinBox *phaseMediaFpsSpin = nullptr;
+    QSlider *phaseMediaFrameSlider = nullptr;
+    QLabel *phaseMediaFrameInfoLabel = nullptr;
+    QCheckBox *phaseMediaSendToSlmCb = nullptr;
     SequenceSource activeSequenceSource = SequenceSource::AnimationPreset;
     int selectedSequenceTrapIndexOneBased = -1;
     PythonTrapScriptEngine *pythonScriptEngine = nullptr;

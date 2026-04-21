@@ -19,6 +19,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QFrame>
+#include <QDialog>
 #include <QHeaderView>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -64,6 +65,7 @@
 #include <QTextEdit>
 #include <QtMath>
 #include <cstring>
+#include <opencv2/opencv.hpp>
 
 namespace {
 constexpr int kImageTabIndex = 2;
@@ -379,6 +381,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    if (phaseMediaTimer) {
+        phaseMediaTimer->stop();
+    }
+
+    if (phaseMediaDialog) {
+        phaseMediaDialog->close();
+        delete phaseMediaDialog;
+        phaseMediaDialog = nullptr;
+    }
+
     if (camManager) {
         camManager->stopCamera();
         delete camManager;
@@ -1121,6 +1133,10 @@ void MainWindow::setupConnections() {
     animationTimer->setSingleShot(false);
     connect(animationTimer, &QTimer::timeout, this, &MainWindow::onAnimationTimerTimeout);
 
+    phaseMediaTimer = new QTimer(this);
+    phaseMediaTimer->setSingleShot(false);
+    connect(phaseMediaTimer, &QTimer::timeout, this, &MainWindow::onPhaseMediaTimerTimeout);
+
     updateAlgorithmSettingsUi();
     onAnimationPresetChanged(animationPresetCombo ? animationPresetCombo->currentIndex() : 0);
     updateAnimationControlsEnabledState();
@@ -1344,7 +1360,8 @@ void MainWindow::openSettingsDialog() {
 }
 
 void MainWindow::openHologramGenerator() {
-    HologramDialog dialog(slmWidth, slmHeight, this);
+    const bool liveAutoMode = autoRunGsEnabled && autoSendSlmEnabled;
+    HologramDialog dialog(slmWidth, slmHeight, liveAutoMode, this);
     connect(&dialog, &HologramDialog::maskReadyToLoad, this, &MainWindow::receiveHologram);
     connect(&dialog, &HologramDialog::sendToSLMRequested, this, &MainWindow::sendHologramToSLM);
     dialog.exec();
@@ -4485,18 +4502,330 @@ void MainWindow::sendHologramToSLM(const QImage &mask) {
     statusBar()->showMessage("Generated Hologram sent directly to SLM.", 5000);
 }
 
-void MainWindow::loadPhasePattern() {
-    QString fileName = QFileDialog::getOpenFileName(this, "Select Phase Mask", "", "Images (*.png *.bmp *.jpg)");
-    if (!fileName.isEmpty()) {
-        QImage loadedImage = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
+QImage MainWindow::normalizePhaseMaskFrame(const QImage &frame) const {
+    if (frame.isNull()) {
+        return QImage();
+    }
 
-        // Check and warn about size mismatch
+    QImage normalized = frame.convertToFormat(QImage::Format_Grayscale8);
+    if (normalized.size() != QSize(slmWidth, slmHeight)) {
+        normalized = normalized.scaled(slmWidth, slmHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    return normalized;
+}
+
+bool MainWindow::loadPhaseFramesFromVideo(const QString &filePath, QVector<QImage> &outFrames, QString &errorOut) const {
+    outFrames.clear();
+
+    cv::VideoCapture capture(filePath.toStdString());
+    if (!capture.isOpened()) {
+        errorOut = "Failed to open selected video file.";
+        return false;
+    }
+
+    cv::Mat frame;
+    while (capture.read(frame)) {
+        if (frame.empty()) {
+            continue;
+        }
+
+        cv::Mat gray;
+        if (frame.channels() == 1) {
+            gray = frame;
+        } else if (frame.channels() == 3) {
+            cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        } else if (frame.channels() == 4) {
+            cv::cvtColor(frame, gray, cv::COLOR_BGRA2GRAY);
+        } else {
+            cv::Mat converted;
+            frame.convertTo(converted, CV_8U);
+            if (converted.channels() == 1) {
+                gray = converted;
+            } else {
+                cv::cvtColor(converted, gray, cv::COLOR_BGR2GRAY);
+            }
+        }
+
+        QImage frameImage(gray.data, gray.cols, gray.rows, static_cast<int>(gray.step), QImage::Format_Grayscale8);
+        const QImage normalized = normalizePhaseMaskFrame(frameImage.copy());
+        if (!normalized.isNull()) {
+            outFrames.append(normalized);
+        }
+    }
+
+    if (outFrames.isEmpty()) {
+        errorOut = "No decodable frames were found in the selected video.";
+        return false;
+    }
+
+    return true;
+}
+
+bool MainWindow::loadPhaseFramesFromFolder(const QString &folderPath, QVector<QImage> &outFrames, QString &errorOut) const {
+    outFrames.clear();
+
+    QDir dir(folderPath);
+    if (!dir.exists()) {
+        errorOut = "Selected folder does not exist.";
+        return false;
+    }
+
+    const QStringList filters = {"*.png", "*.bmp", "*.jpg", "*.jpeg", "*.tif", "*.tiff"};
+    const QStringList fileNames = dir.entryList(filters, QDir::Files, QDir::Name | QDir::IgnoreCase);
+    if (fileNames.isEmpty()) {
+        errorOut = "No supported image files were found in the selected folder.";
+        return false;
+    }
+
+    for (const QString &fileName : fileNames) {
+        const QString filePath = dir.filePath(fileName);
+        const QImage src(filePath);
+        if (src.isNull()) {
+            continue;
+        }
+        const QImage normalized = normalizePhaseMaskFrame(src);
+        if (!normalized.isNull()) {
+            outFrames.append(normalized);
+        }
+    }
+
+    if (outFrames.isEmpty()) {
+        errorOut = "No valid images could be loaded from the selected folder.";
+        return false;
+    }
+
+    return true;
+}
+
+void MainWindow::ensurePhaseMediaDialog() {
+    if (phaseMediaDialog) {
+        return;
+    }
+
+    phaseMediaDialog = new QDialog(this);
+    phaseMediaDialog->setWindowTitle("Phase Mask Media Player");
+    phaseMediaDialog->setMinimumSize(680, 520);
+    phaseMediaDialog->setModal(false);
+
+    QVBoxLayout *layout = new QVBoxLayout(phaseMediaDialog);
+    layout->setSpacing(10);
+
+    phaseMediaDialogPreviewLabel = new QLabel("No media loaded.");
+    phaseMediaDialogPreviewLabel->setAlignment(Qt::AlignCenter);
+    phaseMediaDialogPreviewLabel->setMinimumSize(480, 300);
+    phaseMediaDialogPreviewLabel->setFrameShape(QFrame::StyledPanel);
+    phaseMediaDialogPreviewLabel->setScaledContents(true);
+    layout->addWidget(phaseMediaDialogPreviewLabel, 1);
+
+    phaseMediaFrameInfoLabel = new QLabel("Frame 0 / 0");
+    phaseMediaFrameInfoLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(phaseMediaFrameInfoLabel);
+
+    phaseMediaFrameSlider = new QSlider(Qt::Horizontal);
+    phaseMediaFrameSlider->setRange(0, 0);
+    layout->addWidget(phaseMediaFrameSlider);
+
+    QHBoxLayout *controlsLayout = new QHBoxLayout();
+    phaseMediaPlayPauseBtn = new QPushButton("Play");
+    phaseMediaStopBtn = new QPushButton("Stop");
+    QLabel *fpsLabelLocal = new QLabel("FPS:");
+    phaseMediaFpsSpin = new QSpinBox();
+    phaseMediaFpsSpin->setRange(1, 240);
+    phaseMediaFpsSpin->setValue(30);
+    phaseMediaFpsSpin->setMinimumWidth(84);
+    phaseMediaFpsSpin->setAlignment(Qt::AlignRight);
+    phaseMediaFpsSpin->setButtonSymbols(QAbstractSpinBox::UpDownArrows);
+    phaseMediaFpsSpin->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    phaseMediaSendToSlmCb = new QCheckBox("Send each frame to SLM");
+    phaseMediaSendToSlmCb->setChecked(autoSendSlmEnabled);
+
+    controlsLayout->addWidget(phaseMediaPlayPauseBtn);
+    controlsLayout->addWidget(phaseMediaStopBtn);
+    controlsLayout->addSpacing(8);
+    controlsLayout->addWidget(fpsLabelLocal);
+    controlsLayout->addWidget(phaseMediaFpsSpin);
+    controlsLayout->addStretch();
+    controlsLayout->addWidget(phaseMediaSendToSlmCb);
+    layout->addLayout(controlsLayout);
+
+    QHBoxLayout *bottomLayout = new QHBoxLayout();
+    bottomLayout->addStretch();
+    QPushButton *closeBtn = new QPushButton("Close");
+    bottomLayout->addWidget(closeBtn);
+    layout->addLayout(bottomLayout);
+
+    connect(phaseMediaPlayPauseBtn, &QPushButton::clicked, this, [this]() {
+        if (phaseMediaFrames.isEmpty()) {
+            return;
+        }
+        setPhaseMediaPlaying(!phaseMediaPlaying);
+    });
+    connect(phaseMediaStopBtn, &QPushButton::clicked, this, [this]() {
+        stopPhaseMediaPlayback(true);
+    });
+    connect(phaseMediaFpsSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int fps) {
+        if (phaseMediaTimer && phaseMediaTimer->isActive()) {
+            phaseMediaTimer->setInterval(qMax(1, 1000 / qMax(1, fps)));
+        }
+    });
+    connect(phaseMediaSendToSlmCb, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked && !currentMask.isNull()) {
+            sendToSLM();
+        }
+    });
+    connect(phaseMediaFrameSlider, &QSlider::valueChanged, this, [this](int value) {
+        if (phaseMediaFrameSliderChanging) {
+            return;
+        }
+        showPhaseMediaFrame(value, true);
+    });
+    connect(closeBtn, &QPushButton::clicked, this, [this]() {
+        setPhaseMediaPlaying(false);
+        if (phaseMediaDialog) {
+            phaseMediaDialog->hide();
+        }
+    });
+    connect(phaseMediaDialog, &QDialog::finished, this, [this](int) {
+        setPhaseMediaPlaying(false);
+    });
+}
+
+void MainWindow::updatePhaseMediaPreviewLabel() {
+    if (!phaseMediaDialogPreviewLabel) {
+        return;
+    }
+
+    if (currentMask.isNull()) {
+        phaseMediaDialogPreviewLabel->clear();
+        phaseMediaDialogPreviewLabel->setText("No frame loaded.");
+        return;
+    }
+
+    phaseMediaDialogPreviewLabel->setPixmap(QPixmap::fromImage(currentMask).scaled(
+        phaseMediaDialogPreviewLabel->size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+}
+
+void MainWindow::updatePhaseMediaFrameUi() {
+    if (phaseMediaPlayPauseBtn) {
+        phaseMediaPlayPauseBtn->setText(phaseMediaPlaying ? "Pause" : "Play");
+        phaseMediaPlayPauseBtn->setEnabled(!phaseMediaFrames.isEmpty());
+    }
+    if (phaseMediaStopBtn) {
+        phaseMediaStopBtn->setEnabled(!phaseMediaFrames.isEmpty());
+    }
+    if (phaseMediaFrameSlider) {
+        phaseMediaFrameSlider->setEnabled(!phaseMediaFrames.isEmpty());
+        phaseMediaFrameSliderChanging = true;
+        if (phaseMediaFrames.isEmpty()) {
+            phaseMediaFrameSlider->setRange(0, 0);
+            phaseMediaFrameSlider->setValue(0);
+        } else {
+            phaseMediaFrameSlider->setRange(0, phaseMediaFrames.size() - 1);
+            phaseMediaFrameSlider->setValue(qBound(0, phaseMediaFrameIndex, phaseMediaFrames.size() - 1));
+        }
+        phaseMediaFrameSliderChanging = false;
+    }
+    if (phaseMediaFrameInfoLabel) {
+        if (phaseMediaFrames.isEmpty()) {
+            phaseMediaFrameInfoLabel->setText("Frame 0 / 0");
+        } else {
+            phaseMediaFrameInfoLabel->setText(QString("Frame %1 / %2")
+                .arg(phaseMediaFrameIndex + 1)
+                .arg(phaseMediaFrames.size()));
+        }
+    }
+
+    updatePhaseMediaPreviewLabel();
+}
+
+void MainWindow::setPhaseMediaPlaying(bool playing) {
+    const bool canPlay = playing && !phaseMediaFrames.isEmpty();
+    phaseMediaPlaying = canPlay;
+    if (phaseMediaTimer) {
+        if (canPlay) {
+            const int fps = phaseMediaFpsSpin ? phaseMediaFpsSpin->value() : 30;
+            phaseMediaTimer->start(qMax(1, 1000 / qMax(1, fps)));
+        } else {
+            phaseMediaTimer->stop();
+        }
+    }
+    updatePhaseMediaFrameUi();
+}
+
+void MainWindow::showPhaseMediaFrame(int frameIndex, bool sendWhenEnabled) {
+    if (phaseMediaFrames.isEmpty()) {
+        return;
+    }
+
+    const int boundedIndex = qBound(0, frameIndex, phaseMediaFrames.size() - 1);
+    phaseMediaFrameIndex = boundedIndex;
+    currentMask = phaseMediaFrames.at(phaseMediaFrameIndex);
+    updatePhasePreview();
+    updatePhaseMediaFrameUi();
+
+    if (sendWhenEnabled && phaseMediaSendToSlmCb && phaseMediaSendToSlmCb->isChecked()) {
+        sendToSLM();
+    }
+}
+
+void MainWindow::stopPhaseMediaPlayback(bool resetToFirstFrame) {
+    setPhaseMediaPlaying(false);
+    if (resetToFirstFrame && !phaseMediaFrames.isEmpty()) {
+        showPhaseMediaFrame(0, false);
+    } else {
+        updatePhaseMediaFrameUi();
+    }
+}
+
+void MainWindow::onPhaseMediaTimerTimeout() {
+    if (phaseMediaFrames.isEmpty()) {
+        setPhaseMediaPlaying(false);
+        return;
+    }
+
+    if (phaseMediaFrameIndex >= phaseMediaFrames.size() - 1) {
+        setPhaseMediaPlaying(false);
+        showPhaseMediaFrame(phaseMediaFrames.size() - 1, true);
+        statusBar()->showMessage("Phase mask playback reached last frame and paused.", 3000);
+        return;
+    }
+
+    showPhaseMediaFrame(phaseMediaFrameIndex + 1, true);
+}
+
+void MainWindow::loadPhasePattern() {
+    setPhaseMediaPlaying(false);
+
+    QMessageBox sourceChooser(this);
+    sourceChooser.setWindowTitle("Load Phase Mask");
+    sourceChooser.setText("Select phase mask source type:");
+    QAbstractButton *imageButton = sourceChooser.addButton("Image", QMessageBox::ActionRole);
+    QAbstractButton *videoButton = sourceChooser.addButton("Video", QMessageBox::ActionRole);
+    QAbstractButton *sequenceButton = sourceChooser.addButton("Image Sequence Folder", QMessageBox::ActionRole);
+    sourceChooser.addButton(QMessageBox::Cancel);
+    sourceChooser.exec();
+
+    if (sourceChooser.clickedButton() == imageButton) {
+        const QString fileName = QFileDialog::getOpenFileName(this,
+                                                               "Select Phase Mask Image",
+                                                               "",
+                                                               "Images (*.png *.bmp *.jpg *.jpeg *.tif *.tiff)");
+        if (fileName.isEmpty()) {
+            return;
+        }
+
+        QImage loadedImage = QImage(fileName).convertToFormat(QImage::Format_Grayscale8);
+        if (loadedImage.isNull()) {
+            QMessageBox::warning(this, "Load Error", "Failed to load selected image.");
+            return;
+        }
+
         if (loadedImage.size() != QSize(slmWidth, slmHeight)) {
-            QString origSize = QString::number(loadedImage.width()) + "x" + QString::number(loadedImage.height());
-            QString targetSize = QString::number(slmWidth) + "x" + QString::number(slmHeight);
-            int ret = QMessageBox::warning(this, "Size Mismatch",
-                "Phase mask size (" + origSize + ") does not match SLM resolution (" + targetSize + ").\n\nResize to SLM dimensions?",
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+            const QString origSize = QString::number(loadedImage.width()) + "x" + QString::number(loadedImage.height());
+            const QString targetSize = QString::number(slmWidth) + "x" + QString::number(slmHeight);
+            const int ret = QMessageBox::warning(this, "Size Mismatch",
+                                                 "Phase mask size (" + origSize + ") does not match SLM resolution (" + targetSize + ").\n\nResize to SLM dimensions?",
+                                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
 
             if (ret == QMessageBox::Yes) {
                 loadedImage = loadedImage.scaled(slmWidth, slmHeight);
@@ -4507,6 +4836,77 @@ void MainWindow::loadPhasePattern() {
         updatePhasePreview();
         autoSendToSlmIfEnabled();
         statusBar()->showMessage("Mask loaded: " + fileName, 3000);
+        return;
+    }
+
+    if (sourceChooser.clickedButton() == videoButton) {
+        const QString fileName = QFileDialog::getOpenFileName(this,
+                                                               "Select Phase Mask Video",
+                                                               "",
+                                                               "Video Files (*.mp4 *.avi *.mov *.mkv)");
+        if (fileName.isEmpty()) {
+            return;
+        }
+
+        QVector<QImage> frames;
+        QString error;
+        if (!loadPhaseFramesFromVideo(fileName, frames, error)) {
+            QMessageBox::warning(this, "Video Load Error", error.isEmpty() ? "Failed to load phase mask video." : error);
+            return;
+        }
+
+        phaseMediaFrames = frames;
+        phaseMediaFrameIndex = 0;
+        phaseMediaSourceLabel = QFileInfo(fileName).fileName();
+        ensurePhaseMediaDialog();
+        if (phaseMediaDialog) {
+            phaseMediaDialog->setWindowTitle("Phase Mask Media Player - " + phaseMediaSourceLabel);
+        }
+        if (phaseMediaSendToSlmCb) {
+            phaseMediaSendToSlmCb->setChecked(autoSendSlmEnabled);
+        }
+        showPhaseMediaFrame(0, false);
+        setPhaseMediaPlaying(false);
+        if (phaseMediaDialog) {
+            phaseMediaDialog->show();
+            phaseMediaDialog->raise();
+            phaseMediaDialog->activateWindow();
+        }
+        statusBar()->showMessage(QString("Phase mask video loaded (%1 frames).").arg(phaseMediaFrames.size()), 5000);
+        return;
+    }
+
+    if (sourceChooser.clickedButton() == sequenceButton) {
+        const QString folderPath = QFileDialog::getExistingDirectory(this, "Select Phase Mask Image Sequence Folder");
+        if (folderPath.isEmpty()) {
+            return;
+        }
+
+        QVector<QImage> frames;
+        QString error;
+        if (!loadPhaseFramesFromFolder(folderPath, frames, error)) {
+            QMessageBox::warning(this, "Sequence Load Error", error.isEmpty() ? "Failed to load image sequence." : error);
+            return;
+        }
+
+        phaseMediaFrames = frames;
+        phaseMediaFrameIndex = 0;
+        phaseMediaSourceLabel = QFileInfo(folderPath).fileName();
+        ensurePhaseMediaDialog();
+        if (phaseMediaDialog) {
+            phaseMediaDialog->setWindowTitle("Phase Mask Media Player - " + phaseMediaSourceLabel);
+        }
+        if (phaseMediaSendToSlmCb) {
+            phaseMediaSendToSlmCb->setChecked(autoSendSlmEnabled);
+        }
+        showPhaseMediaFrame(0, false);
+        setPhaseMediaPlaying(false);
+        if (phaseMediaDialog) {
+            phaseMediaDialog->show();
+            phaseMediaDialog->raise();
+            phaseMediaDialog->activateWindow();
+        }
+        statusBar()->showMessage(QString("Phase mask image sequence loaded (%1 frames).").arg(phaseMediaFrames.size()), 5000);
     }
 }
 

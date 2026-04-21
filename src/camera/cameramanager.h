@@ -68,7 +68,7 @@ private slots:
 
 private:
     bool revertRecordButtonIfPossible() const;
-    bool openRecordingWriter(const QString &path, bool saveCompressed, const cv::Size &frameSize, bool isColor, const QString &sourceLabel);
+    bool openRecordingWriter(const QString &path, bool saveCompressed, const cv::Size &frameSize, bool isColor, double fps, const QString &sourceLabel);
     bool imageLooksGrayscale(const QImage &image) const;
     int normalizedRotationDegrees(int degrees) const;
     QTransform cameraDisplayTransform() const;
@@ -104,6 +104,8 @@ private:
     bool cvWriterIsColor = true;
     QString cvWriterModeLabel;
     bool cvWriterUsingLosslessFallback = false;
+    double cvMeasuredInputFps = 0.0;
+    double cvTargetOpenCvFps = 0.0;
 
     // UDP stream variables
     CameraStream *udpStream = nullptr;

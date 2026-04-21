@@ -15,6 +15,7 @@
 namespace {
 struct WriterAttempt {
     int codec;
+    int apiPreference;
     const char *label;
 };
 }
@@ -34,6 +35,7 @@ bool CameraManager::openRecordingWriter(const QString &path,
                                         bool saveCompressed,
                                         const cv::Size &frameSize,
                                         bool isColor,
+                                        double fps,
                                         const QString &sourceLabel) {
     if (frameSize.width <= 0 || frameSize.height <= 0) {
         emit statusMessage(sourceLabel + ": invalid frame size for recording.");
@@ -51,6 +53,7 @@ bool CameraManager::openRecordingWriter(const QString &path,
     cvWriterModeLabel.clear();
     cvWriterUsingLosslessFallback = false;
 
+    const double writerFps = qBound(1.0, fps, 240.0);
     QList<WriterAttempt> attempts;
     if (uncompressed) {
         if (suffix != QStringLiteral("avi")) {
@@ -59,29 +62,39 @@ bool CameraManager::openRecordingWriter(const QString &path,
         }
 
         if (isColor) {
-            attempts.append({cv::VideoWriter::fourcc('D', 'I', 'B', ' '), "DIB "});
-            attempts.append({cv::VideoWriter::fourcc('R', 'G', 'B', ' '), "RGB "});
+            attempts.append({cv::VideoWriter::fourcc('D', 'I', 'B', ' '), cv::CAP_FFMPEG, "FFMPEG:DIB "});
+            attempts.append({cv::VideoWriter::fourcc('R', 'G', 'B', ' '), cv::CAP_FFMPEG, "FFMPEG:RGB "});
+            attempts.append({cv::VideoWriter::fourcc('D', 'I', 'B', ' '), cv::CAP_ANY, "ANY:DIB "});
+            attempts.append({cv::VideoWriter::fourcc('R', 'G', 'B', ' '), cv::CAP_ANY, "ANY:RGB "});
         } else {
-            attempts.append({cv::VideoWriter::fourcc('Y', '8', '0', '0'), "Y800"});
-            attempts.append({cv::VideoWriter::fourcc('G', 'R', 'E', 'Y'), "GREY"});
-            attempts.append({cv::VideoWriter::fourcc('Y', '8', ' ', ' '), "Y8"});
+            attempts.append({cv::VideoWriter::fourcc('Y', '8', '0', '0'), cv::CAP_FFMPEG, "FFMPEG:Y800"});
+            attempts.append({cv::VideoWriter::fourcc('G', 'R', 'E', 'Y'), cv::CAP_FFMPEG, "FFMPEG:GREY"});
+            attempts.append({cv::VideoWriter::fourcc('Y', '8', ' ', ' '), cv::CAP_FFMPEG, "FFMPEG:Y8"});
+            attempts.append({cv::VideoWriter::fourcc('Y', '8', '0', '0'), cv::CAP_ANY, "ANY:Y800"});
+            attempts.append({cv::VideoWriter::fourcc('G', 'R', 'E', 'Y'), cv::CAP_ANY, "ANY:GREY"});
+            attempts.append({cv::VideoWriter::fourcc('Y', '8', ' ', ' '), cv::CAP_ANY, "ANY:Y8"});
         }
 
-        attempts.append({0, "raw-default"});
-        attempts.append({cv::VideoWriter::fourcc('F', 'F', 'V', '1'), "FFV1"});
-        attempts.append({cv::VideoWriter::fourcc('H', 'F', 'Y', 'U'), "HFYU"});
+        attempts.append({0, cv::CAP_FFMPEG, "FFMPEG:raw-default"});
+        attempts.append({0, cv::CAP_ANY, "ANY:raw-default"});
+        attempts.append({cv::VideoWriter::fourcc('F', 'F', 'V', '1'), cv::CAP_FFMPEG, "FFMPEG:FFV1"});
+        attempts.append({cv::VideoWriter::fourcc('H', 'F', 'Y', 'U'), cv::CAP_FFMPEG, "FFMPEG:HFYU"});
+        attempts.append({cv::VideoWriter::fourcc('F', 'F', 'V', '1'), cv::CAP_ANY, "ANY:FFV1"});
+        attempts.append({cv::VideoWriter::fourcc('H', 'F', 'Y', 'U'), cv::CAP_ANY, "ANY:HFYU"});
     } else if (suffix == QStringLiteral("mp4")) {
-        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), "mp4v"});
+        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), cv::CAP_FFMPEG, "FFMPEG:mp4v"});
+        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), cv::CAP_ANY, "ANY:mp4v"});
     } else {
-        attempts.append({cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), "MJPG"});
-        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), "mp4v"});
+        attempts.append({cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), cv::CAP_ANY, "ANY:MJPG"});
+        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), cv::CAP_FFMPEG, "FFMPEG:mp4v"});
+        attempts.append({cv::VideoWriter::fourcc('m', 'p', '4', 'v'), cv::CAP_ANY, "ANY:mp4v"});
     }
 
     QStringList triedCodecs;
     QString openedCodec;
     for (const WriterAttempt &attempt : attempts) {
         triedCodecs << QString::fromLatin1(attempt.label);
-        cvVideoWriter.open(path.toStdString(), attempt.codec, 30.0, frameSize, isColor);
+        cvVideoWriter.open(path.toStdString(), attempt.apiPreference, attempt.codec, writerFps, frameSize, isColor);
         if (cvVideoWriter.isOpened()) {
             openedCodec = QString::fromLatin1(attempt.label);
             break;
@@ -94,7 +107,7 @@ bool CameraManager::openRecordingWriter(const QString &path,
         return false;
     }
 
-    if (uncompressed && (openedCodec == QStringLiteral("FFV1") || openedCodec == QStringLiteral("HFYU"))) {
+    if (uncompressed && (openedCodec.contains(QStringLiteral("FFV1")) || openedCodec.contains(QStringLiteral("HFYU")))) {
         cvWriterUsingLosslessFallback = true;
     }
 
@@ -292,7 +305,13 @@ void CameraManager::startCamera() {
     } else if (backend == CameraBackend::OpenCV) {
         // CAP_DSHOW forces DirectShow, which guarantees OBS Virtual Cam detection
         if (cvCapture.open(currentCamIndex, cv::CAP_DSHOW)) {
-            cvTimer->start(30); // ~33 FPS
+            const double reportedFps = cvCapture.get(cv::CAP_PROP_FPS);
+            cvTargetOpenCvFps = (reportedFps > 1.0 && reportedFps < 1000.0) ? reportedFps : 100.0;
+            const int intervalMs = qMax(1, static_cast<int>(qRound(1000.0 / cvTargetOpenCvFps)));
+            cvTimer->start(intervalMs);
+            emit statusMessage(QString("OpenCV camera target FPS: %1 (timer %2 ms)")
+                                   .arg(cvTargetOpenCvFps, 0, 'f', 1)
+                                   .arg(intervalMs));
         } else {
             emit statusMessage("OpenCV Error: Cannot open camera.");
         }
@@ -543,6 +562,7 @@ void CameraManager::toggleRecording(bool checked) {
                                      save_compressed,
                                      cv::Size(sampleImage.width(), sampleImage.height()),
                                      !imageLooksGrayscale(sampleImage),
+                                     (cvMeasuredInputFps > 1.0) ? cvMeasuredInputFps : 60.0,
                                      QStringLiteral("Webcam"))) {
                 revertRecordButtonIfPossible();
                 return;
@@ -566,6 +586,9 @@ void CameraManager::toggleRecording(bool checked) {
                                      save_compressed,
                                      cv::Size(sampleImage.width(), sampleImage.height()),
                                      !imageLooksGrayscale(sampleImage),
+                                     (cvMeasuredInputFps > 1.0)
+                                         ? cvMeasuredInputFps
+                                         : ((cvTargetOpenCvFps > 1.0) ? cvTargetOpenCvFps : 100.0),
                                      QStringLiteral("OpenCV"))) {
                 revertRecordButtonIfPossible();
                 return;
@@ -585,6 +608,7 @@ void CameraManager::toggleRecording(bool checked) {
                                      save_compressed,
                                      cv::Size(sampleImage.width(), sampleImage.height()),
                                      !imageLooksGrayscale(sampleImage),
+                                     (cvMeasuredInputFps > 1.0) ? cvMeasuredInputFps : 60.0,
                                      QStringLiteral("UDP Stream"))) {
                 revertRecordButtonIfPossible();
                 return;
@@ -698,6 +722,7 @@ void CameraManager::onDurationChanged(qint64 duration) {
 }
 
 void CameraManager::calculateFPS() {
+    cvMeasuredInputFps = static_cast<double>(frameCount);
     emit fpsUpdated(QString("FPS: %1").arg(frameCount));
     frameCount = 0;
 }   
