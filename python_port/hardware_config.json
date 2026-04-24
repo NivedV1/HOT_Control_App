@@ -1,0 +1,19 @@
+{
+  "slm_width": 1920,
+  "slm_height": 1080,
+  "slm_pixel_size_um": 8.0,
+  "cam_width": 1920,
+  "cam_height": 1080,
+  "cam_pixel_size_um": 5.0,
+  "camera_imaging_magnification": 1.0,
+  "wavelength_nm": 1064.0,
+  "focal_length_mm": 100.0,
+  "iterations": 4,
+  "wgs_relaxation": 0.5,
+  "slm_selected_monitor": 1,
+  "camera_backend": 2,
+  "udp_bind_ip": "0.0.0.0",
+  "udp_port": 9000,
+  "slm_output_mode": "direct",
+  "slm_window_id": 0
+}
