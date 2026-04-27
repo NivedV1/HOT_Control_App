@@ -47,3 +47,27 @@
 - [x] Add camera preview monitor output window controls (show/hide monitor, save/record, FPS/pixel readout).
 - [x] Add phase-media player dialog UI (preview, slider, frame info, play/stop).
 - [x] Add grid enlarge/restore toggle in monitor header.
+
+## Planned Next Steps
+
+## Step 9 - Strict C++ UI parity cleanup
+- [x] Remove remaining non-C++ main-window controls/labels.
+- [x] Match exact text labels/tooltips to C++ UI.
+- [ ] Tune spacing/sizing/alignment to reduce visual drift.
+- [x] Match target-grid interaction parity: select/drag points + table edit sync.
+- [x] Add Camera target mode behavior in target section (live camera frame on Camera tab).
+
+## Step 10 - Runtime behavior parity validation
+- [ ] Run side-by-side workflow tests on local hardware (camera + SLM).
+- [x] Fix behavior mismatches in send/clear/playback edge cases.
+- [ ] Validate monitor routing behavior across screen changes.
+
+## Step 11 - Stability and regression safety
+- [ ] Add small regression checks for config load/save and critical UI flows.
+- [x] Add error-path hardening for camera disconnect/UDP loss/DLL failures.
+- [ ] Finalize release checklist for Python port handoff.
+
+## Settings Fixes (Current)
+- [x] Auto-run GS now triggers on point edits/add/remove/drag end and target imports.
+- [x] Auto-send SLM now sends on auto-generated masks and manual generate action.
+- [x] Settings now persist immediately on Apply/Save and survive relaunch.

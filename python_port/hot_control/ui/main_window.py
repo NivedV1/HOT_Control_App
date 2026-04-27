@@ -10,6 +10,7 @@ from PIL import Image
 from PySide6.QtCore import QEvent, QPoint, QRect, QTimer, Qt
 from PySide6.QtGui import QAction, QGuiApplication, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -28,12 +29,15 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStackedWidget,
+    QHeaderView,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QStyle,
+    QSizePolicy,
 )
 
 from ..algorithms import generate_phase_mask
@@ -91,6 +95,9 @@ class MainWindow(QMainWindow):
         self.phase_media_dialog_preview = None
         self.phase_media_dialog_slider = None
         self.phase_media_dialog_info = None
+        self.phase_media_dialog_fps = None
+        self.phase_media_dialog_send_cb = None
+        self.phase_media_dialog_play_btn = None
         self.camera_backend = int(self.config.get("camera_backend", 0))
         self.udp_bind_ip = str(self.config.get("udp_bind_ip", "0.0.0.0"))
         self.udp_port = int(self.config.get("udp_port", 9000))
@@ -111,6 +118,8 @@ class MainWindow(QMainWindow):
         self.camera_preview_record_time_label = None
         self.last_fps_timestamp_ms = 0.0
         self.last_fps_frame_count = 0
+        self.trap_table_sync_in_progress = False
+        self.grid_drag_moved = False
 
         self.setWindowTitle("Holographic Optical Tweezer Control")
         self.setMinimumSize(1100, 700)
@@ -138,19 +147,22 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def eventFilter(self, watched, event):  # type: ignore[override]
-        if (watched == self.camera_view or watched == self.camera_preview_label) and event.type() == QEvent.Type.MouseMove:
+        camera_view = getattr(self, "camera_view", None)
+        camera_preview_label = getattr(self, "camera_preview_label", None)
+        target_view = getattr(self, "target_view", None)
+        if (watched == camera_view or watched == camera_preview_label) and event.type() == QEvent.Type.MouseMove:
             self._update_camera_pixel_readout(event.position().toPoint(), watched)
-        elif (watched == self.camera_view or watched == self.camera_preview_label) and event.type() == QEvent.Type.Leave:
-            self.camera_pixel_label.setText("Pixel: --, -- | RGB: --, --, --")
+        elif (watched == camera_view or watched == camera_preview_label) and event.type() == QEvent.Type.Leave:
+            self.camera_pixel_label.setText("Camera: --, -- | I: --")
             if self.camera_preview_pixel_label is not None:
                 self.camera_preview_pixel_label.setText("Camera: --, -- | I: --")
-        elif watched == self.target_view and event.type() == QEvent.Type.MouseMove:
+        elif watched == target_view and event.type() == QEvent.Type.MouseMove:
             self._update_grid_hover_and_drag(event.position().toPoint())
-        elif watched == self.target_view and event.type() == QEvent.Type.MouseButtonPress:
+        elif watched == target_view and event.type() == QEvent.Type.MouseButtonPress:
             self._on_target_mouse_press(event.position().toPoint(), event.button())
-        elif watched == self.target_view and event.type() == QEvent.Type.MouseButtonRelease:
+        elif watched == target_view and event.type() == QEvent.Type.MouseButtonRelease:
             self._on_target_mouse_release(event.position().toPoint(), event.button())
-        elif watched == self.target_view and event.type() == QEvent.Type.Leave:
+        elif watched == target_view and event.type() == QEvent.Type.Leave:
             self.grid_hover_label.setText("Grid: --, --")
         return super().eventFilter(watched, event)
 
@@ -223,11 +235,17 @@ class MainWindow(QMainWindow):
         t1_wrap = QWidget()
         t1_row = QHBoxLayout(t1_wrap)
         t1_row.setContentsMargins(0, 0, 0, 0)
-        t1 = QLabel("Target Pattern (Interactive Grid)")
-        t1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        t1 = QLabel("Grid View")
+        t1.setStyleSheet("font-weight: bold;")
         t1_row.addWidget(t1, 1)
-        self.grid_maxmin_btn = QPushButton("Enlarge")
-        self.grid_maxmin_btn.setFixedWidth(72)
+        self.grid_maxmin_btn = QPushButton("□")
+        self.grid_maxmin_btn.setFixedWidth(24)
+        self.grid_maxmin_btn.setMaximumWidth(28)
+        self.grid_maxmin_btn.setMaximumHeight(20)
+        self.grid_maxmin_btn.setToolTip("Enlarge grid view")
+        self.grid_maxmin_btn.setStyleSheet("padding: 0px;")
+        self.grid_maxmin_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton))
+        self.grid_maxmin_btn.setText("")
         self.grid_maxmin_btn.clicked.connect(self._toggle_grid_enlarged)
         t1_row.addWidget(self.grid_maxmin_btn, 0, Qt.AlignmentFlag.AlignRight)
         t2 = QLabel("Phase Mask")
@@ -241,56 +259,93 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(t2, 0, 1)
         self.main_layout.addWidget(t3, 0, 2)
 
-        self.target_view = QLabel("No target points")
+        self.target_view = QLabel("")
         self.target_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.target_view.setMinimumHeight(320)
+        self.target_view.setMinimumSize(300, 200)
+        self.target_view.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.target_view.setMouseTracking(True)
         self.target_view.installEventFilter(self)
         self.target_view.setStyleSheet("border: 1px solid #666; background: #0d0d0d;")
 
-        self.phase_mask_view = QLabel("No mask")
+        self.phase_mask_view = QLabel("SLM Offline")
         self.phase_mask_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.phase_mask_view.setMinimumHeight(320)
+        self.phase_mask_view.setMinimumSize(300, 200)
+        self.phase_mask_view.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.phase_mask_view.setStyleSheet("border: 1px solid #666; background: #0d0d0d;")
 
-        self.camera_view = QLabel("Camera feed offline")
+        self.camera_view = QLabel("Camera Feed (Offline)")
         self.camera_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.camera_view.setMinimumHeight(320)
+        self.camera_view.setMinimumSize(300, 200)
+        self.camera_view.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.camera_view.setMouseTracking(True)
         self.camera_view.installEventFilter(self)
         self.camera_view.setStyleSheet("border: 1px solid #666; background: #0d0d0d;")
+        self.camera_view.setToolTip("Left-drag to zoom. Right-click to undo one zoom step. Double-click to reset zoom.")
 
         self.main_layout.addWidget(self.target_view, 1, 0)
-        self.main_layout.addWidget(self.phase_mask_view, 1, 1)
-        self.main_layout.addWidget(self.camera_view, 1, 2)
-
-    def _build_tools_row(self):
-        self.tools_row = QWidget()
-        row = QHBoxLayout(self.tools_row)
-        row.setContentsMargins(0, 0, 0, 0)
-        self.save_mask_btn = QPushButton("Save Mask")
-        self.save_mask_btn.clicked.connect(self._on_save_mask)
-        row.addWidget(self.save_mask_btn)
-        self.preview_corr_cb = QCheckBox("Preview Correction")
+        self.phase_column = QWidget()
+        phase_col = QVBoxLayout(self.phase_column)
+        phase_col.setContentsMargins(0, 0, 0, 0)
+        phase_col.setSpacing(5)
+        phase_col.addWidget(self.phase_mask_view, 1)
+        phase_tools_row = QHBoxLayout()
+        self.resolution_label = QLabel(
+            f"Resolution: {int(self.config.get('slm_width', 1920))} x {int(self.config.get('slm_height', 1080))}"
+        )
+        phase_tools_row.addWidget(self.resolution_label)
+        phase_tools_row.addStretch()
+        self.preview_corr_cb = QCheckBox("Show Correction")
         self.preview_corr_cb.setChecked(True)
         self.preview_corr_cb.toggled.connect(lambda _checked: self._refresh_mask_view())
-        row.addWidget(self.preview_corr_cb)
-        self.overlay_target_cb = QCheckBox("Overlay target on camera")
-        self.overlay_target_cb.setChecked(False)
-        self.overlay_target_cb.toggled.connect(lambda _checked: self._refresh_camera_view())
-        row.addWidget(self.overlay_target_cb)
+        phase_tools_row.addWidget(self.preview_corr_cb)
+        self.save_mask_btn = QPushButton("Save Mask")
+        self.save_mask_btn.clicked.connect(self._on_save_mask)
+        phase_tools_row.addWidget(self.save_mask_btn)
+        phase_col.addLayout(phase_tools_row)
+        self.main_layout.addWidget(self.phase_column, 1, 1)
+
+        self.camera_column = QWidget()
+        camera_col = QVBoxLayout(self.camera_column)
+        camera_col.setContentsMargins(0, 0, 0, 0)
+        camera_col.setSpacing(5)
+        camera_route_row = QHBoxLayout()
         self.camera_preview_monitor_combo = QComboBox()
-        self.camera_preview_monitor_combo.setMinimumWidth(180)
+        self.camera_preview_monitor_combo.setMinimumWidth(0)
+        self.camera_preview_monitor_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.camera_preview_monitor_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.camera_preview_monitor_combo.setMinimumContentsLength(1)
         self.camera_preview_monitor_combo.currentIndexChanged.connect(self._on_camera_preview_monitor_changed)
-        row.addWidget(self.camera_preview_monitor_combo)
+        camera_route_row.addWidget(self.camera_preview_monitor_combo, 1)
         self.camera_preview_toggle_btn = QPushButton("Show On Monitor")
         self.camera_preview_toggle_btn.setCheckable(True)
         self.camera_preview_toggle_btn.toggled.connect(self._on_camera_preview_toggled)
-        row.addWidget(self.camera_preview_toggle_btn)
+        camera_route_row.addWidget(self.camera_preview_toggle_btn)
+        camera_col.addLayout(camera_route_row)
+        camera_col.addWidget(self.camera_view, 1)
+
+        camera_tools_row = QHBoxLayout()
+        self.fps_label = QLabel("FPS: 0")
+        camera_tools_row.addWidget(self.fps_label)
+        self.camera_pixel_status_label = QLabel("Camera: --, -- | I: --")
+        camera_tools_row.addWidget(self.camera_pixel_status_label)
+        camera_tools_row.addStretch()
+        self.overlay_target_cb = QCheckBox("Overlay Target")
+        self.overlay_target_cb.setChecked(False)
+        self.overlay_target_cb.toggled.connect(lambda _checked: self._refresh_camera_view())
+        camera_tools_row.addWidget(self.overlay_target_cb)
+        camera_col.addLayout(camera_tools_row)
+        self.main_layout.addWidget(self.camera_column, 1, 2)
+
+    def _build_tools_row(self):
+        self.target_tools = QWidget()
+        target_row = QHBoxLayout(self.target_tools)
+        target_row.setContentsMargins(0, 0, 0, 0)
         self.grid_hover_label = QLabel("Grid: --, --")
-        row.addWidget(self.grid_hover_label)
-        row.addStretch()
-        self.main_layout.addWidget(self.tools_row, 2, 0, 1, 3)
+        target_row.addWidget(self.grid_hover_label)
+        target_row.addStretch()
+        self.main_layout.addWidget(self.target_tools, 2, 0, 1, 3)
 
     def _build_controls(self):
         self.controls_row = QWidget()
@@ -312,24 +367,29 @@ class MainWindow(QMainWindow):
         if self.grid_enlarged:
             self.monitor_title_phase.setVisible(False)
             self.monitor_title_camera.setVisible(False)
-            self.phase_mask_view.setVisible(False)
-            self.camera_view.setVisible(False)
-            self.tools_row.setVisible(False)
+            self.phase_column.setVisible(False)
+            self.camera_column.setVisible(False)
+            self.target_tools.setVisible(False)
             self.controls_row.setVisible(False)
-            self.grid_maxmin_btn.setText("Restore")
+            self.grid_maxmin_btn.setToolTip("Restore to normal view")
+            self.grid_maxmin_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
+            self.grid_maxmin_btn.setText("")
         else:
             self.monitor_title_phase.setVisible(True)
             self.monitor_title_camera.setVisible(True)
-            self.phase_mask_view.setVisible(True)
-            self.camera_view.setVisible(True)
-            self.tools_row.setVisible(True)
+            self.phase_column.setVisible(True)
+            self.camera_column.setVisible(True)
+            self.target_tools.setVisible(True)
             self.controls_row.setVisible(True)
-            self.grid_maxmin_btn.setText("Enlarge")
+            self.grid_maxmin_btn.setToolTip("Enlarge grid view")
+            self.grid_maxmin_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton))
+            self.grid_maxmin_btn.setText("")
 
     def _build_left_column(self):
         w = QWidget()
         layout = QVBoxLayout(w)
         self.target_tabs = QTabWidget()
+        self.target_tabs.currentChanged.connect(self._on_target_tab_changed)
         layout.addWidget(self.target_tabs)
 
         self._build_manual_tab()
@@ -339,6 +399,17 @@ class MainWindow(QMainWindow):
         self._build_animation_tab()
         self._build_python_tab()
         return w
+
+    def _on_target_tab_changed(self, _index):
+        self._refresh_target_view()
+
+    def _is_camera_target_mode(self):
+        if not hasattr(self, "target_tabs") or self.target_tabs is None:
+            return False
+        tab = self.target_tabs.currentWidget()
+        if tab is None:
+            return False
+        return self.target_tabs.tabText(self.target_tabs.indexOf(tab)) == "Camera"
 
     def _build_manual_tab(self):
         tab = QWidget()
@@ -354,11 +425,13 @@ class MainWindow(QMainWindow):
 
         self.manual_table = QTableWidget(0, 3)
         self.manual_table.setHorizontalHeaderLabels(["No", "X", "Y"])
+        self.manual_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.manual_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.manual_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.manual_table.itemChanged.connect(self._on_manual_table_item_changed)
+        self.manual_table.itemSelectionChanged.connect(self._on_manual_table_selection_changed)
         layout.addWidget(self.manual_table)
-
-        apply_btn = QPushButton("Apply Manual Points")
-        apply_btn.clicked.connect(self._manual_apply_points)
-        layout.addWidget(apply_btn)
+        layout.addStretch()
         self.target_tabs.addTab(tab, "Manual")
 
     def _build_pattern_tab(self):
@@ -448,7 +521,9 @@ class MainWindow(QMainWindow):
         row.addWidget(clear_btn)
         row.addStretch()
         layout.addLayout(row)
-        self.image_info = QLabel("No image loaded. Will convert bright pixels into target points.")
+        self.image_info = QLabel(
+            "No image loaded. Will resize to camera resolution, convert to grayscale, and use it as a GS image target."
+        )
         self.image_info.setWordWrap(True)
         layout.addWidget(self.image_info)
         layout.addStretch()
@@ -457,7 +532,7 @@ class MainWindow(QMainWindow):
     def _build_camera_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        info = QLabel("Live camera points table mirrors the shared target list.")
+        info = QLabel("Shows the latest live camera frame in the target area.")
         info.setWordWrap(True)
         layout.addWidget(info)
         btns = QHBoxLayout()
@@ -470,6 +545,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(btns)
         self.camera_table = QTableWidget(0, 3)
         self.camera_table.setHorizontalHeaderLabels(["No", "X", "Y"])
+        self.camera_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.camera_table)
         self.target_tabs.addTab(tab, "Camera")
 
@@ -495,14 +571,11 @@ class MainWindow(QMainWindow):
         self.anim_particles.setValue(24)
         self.anim_realtime = QCheckBox("Realtime")
         self.anim_realtime.setChecked(True)
-        self.anim_send_slm = QCheckBox("Send each frame to SLM")
-        self.anim_send_slm.setChecked(False)
         form.addRow("Preset:", self.anim_preset)
         form.addRow("Frame rate (FPS):", self.anim_fps)
         form.addRow("No. of frames:", self.anim_frames)
         form.addRow("No. of particles:", self.anim_particles)
         form.addRow("Mode:", self.anim_realtime)
-        form.addRow("", self.anim_send_slm)
 
         self.anim_params_stack = QStackedWidget()
         circle_page = QWidget()
@@ -599,7 +672,6 @@ class MainWindow(QMainWindow):
         settings_row.addWidget(QLabel("Trap"))
         settings_row.addWidget(self.python_trap_selector)
         settings_row.addStretch()
-        layout.addLayout(settings_row)
 
         row = QHBoxLayout()
         run_btn = QPushButton("Run Code")
@@ -611,10 +683,10 @@ class MainWindow(QMainWindow):
         self.python_stop_btn = QPushButton("Stop")
         self.python_stop_btn.clicked.connect(self._stop_python_sequence)
         self.python_stop_btn.setEnabled(False)
-        row.addWidget(self.python_stop_btn)
+        self.python_stop_btn.setVisible(False)
         self.python_reset_btn = QPushButton("Reset")
         self.python_reset_btn.clicked.connect(self._reset_python_sequence)
-        row.addWidget(self.python_reset_btn)
+        self.python_reset_btn.setVisible(False)
         save_btn = QPushButton("Save .py")
         save_btn.clicked.connect(self._save_python_script)
         row.addWidget(save_btn)
@@ -633,6 +705,7 @@ class MainWindow(QMainWindow):
         form = QFormLayout(algo_group)
         self.algorithm_combo = QComboBox()
         self.algorithm_combo.addItems(["Gerchberg-Saxton", "Weighted GS", "Random Mask Encoding (Paper)"])
+        self.algorithm_combo.currentIndexChanged.connect(self._on_algorithm_selection_changed)
         self.iter_spin = QSpinBox()
         self.iter_spin.setRange(1, 1000)
         self.iter_spin.setValue(int(self.config["iterations"]))
@@ -641,31 +714,53 @@ class MainWindow(QMainWindow):
         self.relax_spin.setSingleStep(0.05)
         self.relax_spin.setDecimals(2)
         self.relax_spin.setValue(float(self.config["wgs_relaxation"]))
-        gen_btn = QPushButton("Generate GS Mask")
-        gen_btn.clicked.connect(self._generate_mask_clicked)
+        self.generate_mask_btn = QPushButton("Generate GS Mask")
+        self.generate_mask_btn.clicked.connect(self._generate_mask_clicked)
+        self.iterations_label = QLabel("Iterations:")
+        self.relaxation_label = QLabel("Relaxation:")
         form.addRow("Algorithm:", self.algorithm_combo)
-        form.addRow("Iterations:", self.iter_spin)
-        form.addRow("Relaxation:", self.relax_spin)
-        form.addRow(gen_btn)
+        form.addRow(self.iterations_label, self.iter_spin)
+        form.addRow(self.relaxation_label, self.relax_spin)
+        form.addRow(self.generate_mask_btn)
+        self._update_algorithm_settings_ui()
         layout.addWidget(algo_group)
         layout.addStretch()
         return w
 
+    def _on_algorithm_selection_changed(self, _index):
+        self._update_algorithm_settings_ui()
+
+    def _update_algorithm_settings_ui(self):
+        idx = self.algorithm_combo.currentIndex()
+        gs_selected = idx == 0
+        wgs_selected = idx == 1
+        rme_selected = idx == 2
+
+        self.iterations_label.setVisible(not rme_selected)
+        self.iter_spin.setVisible(not rme_selected)
+
+        self.relaxation_label.setVisible(wgs_selected)
+        self.relax_spin.setVisible(wgs_selected)
+
+        if gs_selected:
+            self.generate_mask_btn.setText("Generate GS Mask")
+        elif rme_selected:
+            self.generate_mask_btn.setText("Generate RME Mask")
+        else:
+            self.generate_mask_btn.setText("Generate (WGS unavailable)")
+
     def _build_right_column(self):
         w = QWidget()
         layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         cam_group = QGroupBox("Camera Control")
         cam_form = QFormLayout(cam_group)
+        cam_form.setVerticalSpacing(6)
+        cam_form.setHorizontalSpacing(10)
         self.cam_select = QComboBox()
         cam_form.addRow("Camera:", self.cam_select)
-        self.camera_source_label = QLabel("")
-        self.camera_source_label.setWordWrap(True)
-        cam_form.addRow("Source:", self.camera_source_label)
-
-        refresh_btn = QPushButton("Refresh List")
-        refresh_btn.clicked.connect(self._refresh_camera_list)
-        cam_form.addRow("Devices:", refresh_btn)
 
         cap_row = QHBoxLayout()
         self.capture_image_btn = QPushButton("Save Image")
@@ -686,24 +781,14 @@ class MainWindow(QMainWindow):
         run_row.addWidget(self.cam_stop_btn)
         cam_form.addRow(run_row)
 
-        self.camera_pixel_label = QLabel("Pixel: --, -- | RGB: --, --, --")
-        cam_form.addRow("Readout:", self.camera_pixel_label)
+        self.camera_pixel_label = QLabel("Camera: --, -- | I: --")
+        self.camera_pixel_label.setVisible(False)
 
         slm_group = QGroupBox("SLM Control")
         slm_layout = QVBoxLayout(slm_group)
         slm_status = QLabel("SLM: Connected")
         slm_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
         slm_layout.addWidget(slm_status)
-        self.slm_output_mode_combo = QComboBox()
-        self.slm_output_mode_combo.addItem("Direct Screen (Fullscreen)", "direct")
-        self.slm_output_mode_combo.addItem("Image_Control.dll", "dll")
-        mode_idx = 0 if self.slm_output_mode == "direct" else 1
-        self.slm_output_mode_combo.setCurrentIndex(mode_idx)
-        self.slm_output_mode_combo.currentIndexChanged.connect(self._on_slm_output_mode_changed)
-        slm_layout.addWidget(self.slm_output_mode_combo)
-        self.slm_output_mode_label = QLabel("")
-        self.slm_output_mode_label.setStyleSheet("color: #9CA3AF;")
-        slm_layout.addWidget(self.slm_output_mode_label)
         load_phase = QPushButton("Load Phase Mask")
         load_phase.clicked.connect(self._load_phase_mask_source)
         send_slm = QPushButton("Send to SLM")
@@ -713,27 +798,16 @@ class MainWindow(QMainWindow):
         slm_layout.addWidget(load_phase)
         slm_layout.addWidget(send_slm)
         slm_layout.addWidget(clear_slm)
-        media_row = QHBoxLayout()
-        self.phase_media_play_btn = QPushButton("Play Media")
-        self.phase_media_play_btn.clicked.connect(self._toggle_phase_media_play)
-        self.phase_media_stop_btn = QPushButton("Stop Media")
-        self.phase_media_stop_btn.clicked.connect(self._stop_phase_media)
-        media_row.addWidget(self.phase_media_play_btn)
-        media_row.addWidget(self.phase_media_stop_btn)
-        slm_layout.addLayout(media_row)
-        self.phase_media_fps = QSpinBox()
-        self.phase_media_fps.setRange(1, 240)
-        self.phase_media_fps.setValue(30)
-        slm_layout.addWidget(QLabel("Media FPS"))
-        slm_layout.addWidget(self.phase_media_fps)
-        self.phase_media_send_slm = QCheckBox("Send media frames to SLM")
-        self.phase_media_send_slm.setChecked(True)
-        slm_layout.addWidget(self.phase_media_send_slm)
-        self.phase_media_info = QLabel("Media: none")
-        self.phase_media_info.setWordWrap(True)
-        slm_layout.addWidget(self.phase_media_info)
-        self._update_slm_output_label()
-        self._update_camera_source_label()
+        for widget in [
+            self.capture_image_btn,
+            self.record_video_btn,
+            self.cam_start_btn,
+            self.cam_stop_btn,
+            load_phase,
+            send_slm,
+            clear_slm,
+        ]:
+            widget.setMinimumHeight(0)
 
         layout.addWidget(cam_group)
         layout.addWidget(slm_group)
@@ -775,11 +849,40 @@ class MainWindow(QMainWindow):
         self.config["udp_port"] = int(self.udp_port)
         save_config(self.cfg_path, self.config)
 
+    def _is_auto_mask_generation_algorithm_selected(self):
+        return self.algorithm_combo.currentIndex() in (0, 2)
+
+    def _is_auto_run_enabled(self):
+        return bool(self.config.get("auto_run_gs", False))
+
+    def _is_auto_send_enabled(self):
+        return bool(self.config.get("auto_send_slm", False))
+
+    def _maybe_auto_generate_mask(self):
+        if not self._is_auto_run_enabled():
+            return
+        if not self._is_auto_mask_generation_algorithm_selected():
+            return
+        if not self.current_points:
+            return
+        try:
+            mask, _info = generate_phase_mask(self.current_points, self._settings_dict(), self._algorithm_name())
+        except Exception:
+            return
+        self.current_mask = mask
+        self._refresh_mask_view()
+        if self._is_auto_send_enabled():
+            self._send_mask_to_output(mask)
+
     def _open_settings_dialog(self):
         dlg = SettingsDialog(self, dict(self.config), self.selected_monitor_number)
+        dlg.settings_applied.connect(lambda payload: self._apply_settings_payload(payload, show_message=True))
         if not dlg.exec():
             return
         out = dlg.result_payload()
+        self._apply_settings_payload(out, show_message=True)
+
+    def _apply_settings_payload(self, out, show_message=True):
         self.config.update(out["config"])
         self.selected_monitor_number = int(out["selected_monitor"])
         self.camera_backend = int(self.config.get("camera_backend", self.camera_backend))
@@ -792,17 +895,19 @@ class MainWindow(QMainWindow):
         if self.slm_output_mode not in ("direct", "dll"):
             self.slm_output_mode = "direct"
         self.slm_window_id = int(self.config.get("slm_window_id", self.slm_window_id))
-        if self.slm_output_mode_combo is not None:
-            self.slm_output_mode_combo.blockSignals(True)
-            self.slm_output_mode_combo.setCurrentIndex(0 if self.slm_output_mode == "direct" else 1)
-            self.slm_output_mode_combo.blockSignals(False)
-        self._update_slm_output_label()
+        self.is_dark_mode = bool(self.config.get("ui_dark_mode", self.is_dark_mode))
+        self._apply_theme(self.is_dark_mode)
+        self.overlay_target_cb.setChecked(bool(self.config.get("ui_overlay_default", self.overlay_target_cb.isChecked())))
         self._refresh_monitor_menu()
         self._refresh_target_view()
         self._refresh_camera_view()
-        self.statusBar().showMessage("Hardware settings applied.", 3000)
+        self._save_config()
+        if show_message:
+            self.statusBar().showMessage("Hardware settings applied.", 3000)
 
     def _update_camera_source_label(self):
+        if not hasattr(self, "camera_source_label") or self.camera_source_label is None:
+            return
         if self.camera_backend == 2:
             self.camera_source_label.setText(f"UDP: {self.udp_bind_ip}:{self.udp_port}")
         elif self.camera_backend == 1:
@@ -811,6 +916,8 @@ class MainWindow(QMainWindow):
             self.camera_source_label.setText("Default camera device")
 
     def _on_slm_output_mode_changed(self, _index):
+        if not hasattr(self, "slm_output_mode_combo") or self.slm_output_mode_combo is None:
+            return
         mode = self.slm_output_mode_combo.currentData()
         if str(mode) != self.slm_output_mode:
             self._clear_slm_output()
@@ -819,6 +926,8 @@ class MainWindow(QMainWindow):
         self._update_slm_output_label()
 
     def _update_slm_output_label(self):
+        if not hasattr(self, "slm_output_mode_label") or self.slm_output_mode_label is None:
+            return
         if self.slm_output_mode == "dll":
             dll_ok = self.slm_dll.load()
             if dll_ok:
@@ -936,8 +1045,7 @@ class MainWindow(QMainWindow):
         if mask is not None:
             self.current_mask = mask
             self._refresh_mask_view()
-            if self.anim_send_slm.isChecked():
-                self._send_mask_to_output(mask)
+            self._send_mask_to_output(mask)
         self.anim_preview_label.setText(f"Playing frame {idx + 1}/{len(self.animation_frames)}")
         self._update_animation_preview_labels(self.current_points)
         self.animation_frame_index = (idx + 1) % len(self.animation_frames)
@@ -1005,7 +1113,8 @@ class MainWindow(QMainWindow):
         self._ensure_phase_media_dialog()
         self._update_phase_media_dialog_ui()
         self.phase_media_dialog.show()
-        self.phase_media_info.setText(f"Media: {Path(path).name} ({len(frames)} frames)")
+        if hasattr(self, "phase_media_info") and self.phase_media_info is not None:
+            self.phase_media_info.setText(f"Media: {Path(path).name} ({len(frames)} frames)")
         self.statusBar().showMessage(f"Loaded phase video with {len(frames)} frames.", 4000)
 
     def _load_phase_mask_folder(self):
@@ -1032,7 +1141,8 @@ class MainWindow(QMainWindow):
         self._ensure_phase_media_dialog()
         self._update_phase_media_dialog_ui()
         self.phase_media_dialog.show()
-        self.phase_media_info.setText(f"Media: {p.name} ({len(frames)} frames)")
+        if hasattr(self, "phase_media_info") and self.phase_media_info is not None:
+            self.phase_media_info.setText(f"Media: {p.name} ({len(frames)} frames)")
         self.statusBar().showMessage(f"Loaded phase image sequence with {len(frames)} frames.", 4000)
 
     def _ensure_phase_media_dialog(self):
@@ -1052,14 +1162,25 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.phase_media_dialog_slider)
         self.phase_media_dialog_info = QLabel("Frame 0 / 0")
         layout.addWidget(self.phase_media_dialog_info)
+        media_ctrl_row = QHBoxLayout()
+        media_ctrl_row.addWidget(QLabel("FPS:"))
+        self.phase_media_dialog_fps = QSpinBox()
+        self.phase_media_dialog_fps.setRange(1, 240)
+        self.phase_media_dialog_fps.setValue(30)
+        media_ctrl_row.addWidget(self.phase_media_dialog_fps)
+        self.phase_media_dialog_send_cb = QCheckBox("Send each frame to SLM")
+        self.phase_media_dialog_send_cb.setChecked(True)
+        media_ctrl_row.addWidget(self.phase_media_dialog_send_cb)
+        media_ctrl_row.addStretch()
+        layout.addLayout(media_ctrl_row)
         btn_row = QHBoxLayout()
-        play_btn = QPushButton("Play/Pause")
-        play_btn.clicked.connect(self._toggle_phase_media_play)
+        self.phase_media_dialog_play_btn = QPushButton("Play")
+        self.phase_media_dialog_play_btn.clicked.connect(self._toggle_phase_media_play)
         stop_btn = QPushButton("Stop")
         stop_btn.clicked.connect(self._stop_phase_media)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(dlg.hide)
-        btn_row.addWidget(play_btn)
+        btn_row.addWidget(self.phase_media_dialog_play_btn)
         btn_row.addWidget(stop_btn)
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
@@ -1074,7 +1195,7 @@ class MainWindow(QMainWindow):
         frame = self.phase_media_frames[idx]
         self.current_mask = frame
         self._refresh_mask_view()
-        if self.phase_media_send_slm.isChecked():
+        if self.phase_media_dialog_send_cb is not None and self.phase_media_dialog_send_cb.isChecked():
             self._send_mask_to_output(frame)
         self._update_phase_media_dialog_ui()
 
@@ -1109,9 +1230,13 @@ class MainWindow(QMainWindow):
         if self.phase_media_timer.isActive():
             self._stop_phase_media()
             return
-        fps = max(1, int(self.phase_media_fps.value()))
+        fps_value = 30
+        if self.phase_media_dialog_fps is not None:
+            fps_value = int(self.phase_media_dialog_fps.value())
+        fps = max(1, fps_value)
         self.phase_media_timer.start(max(1, int(round(1000.0 / fps))))
-        self.phase_media_play_btn.setText("Pause Media")
+        if self.phase_media_dialog_play_btn is not None:
+            self.phase_media_dialog_play_btn.setText("Pause")
         self.statusBar().showMessage("Phase media playback started.", 2000)
         self._ensure_phase_media_dialog()
         self._update_phase_media_dialog_ui()
@@ -1119,7 +1244,8 @@ class MainWindow(QMainWindow):
 
     def _stop_phase_media(self):
         self.phase_media_timer.stop()
-        self.phase_media_play_btn.setText("Play Media")
+        if self.phase_media_dialog_play_btn is not None:
+            self.phase_media_dialog_play_btn.setText("Play")
         self.statusBar().showMessage("Phase media playback stopped.", 2000)
 
     def _on_phase_media_timer(self):
@@ -1130,24 +1256,30 @@ class MainWindow(QMainWindow):
         frame = self.phase_media_frames[self.phase_media_index]
         self.current_mask = frame
         self._refresh_mask_view()
-        self.phase_media_info.setText(
-            f"Media frame: {self.phase_media_index + 1}/{len(self.phase_media_frames)}"
-        )
+        if hasattr(self, "phase_media_info") and self.phase_media_info is not None:
+            self.phase_media_info.setText(
+                f"Media frame: {self.phase_media_index + 1}/{len(self.phase_media_frames)}"
+            )
         self._update_phase_media_dialog_ui()
-        if self.phase_media_send_slm.isChecked():
+        if self.phase_media_dialog_send_cb is not None and self.phase_media_dialog_send_cb.isChecked():
             self._send_mask_to_output(frame)
 
     def _manual_add_point(self):
-        row = self.manual_table.rowCount()
-        self.manual_table.insertRow(row)
-        self.manual_table.setItem(row, 0, QTableWidgetItem(str(row + 1)))
-        self.manual_table.setItem(row, 1, QTableWidgetItem("0"))
-        self.manual_table.setItem(row, 2, QTableWidgetItem("0"))
+        self.current_points.append((0.0, 0.0))
+        self.selected_point_index = len(self.current_points) - 1
+        self._sync_manual_table(self.current_points)
+        self._sync_camera_table(self.current_points)
+        self._select_manual_row(self.selected_point_index)
+        self._refresh_target_view()
+        self._refresh_camera_view()
+        self._maybe_auto_generate_mask()
 
     def _manual_clear_points(self):
         self.manual_table.setRowCount(0)
         self.camera_table.setRowCount(0)
         self.current_points = []
+        self.selected_point_index = -1
+        self.current_mask = None
         self._refresh_all_views()
         self.statusBar().showMessage("All target points cleared.", 3000)
 
@@ -1166,16 +1298,19 @@ class MainWindow(QMainWindow):
         self._sync_camera_table(points)
         self._refresh_target_view()
         self._refresh_camera_view()
+        self._maybe_auto_generate_mask()
         self.statusBar().showMessage(f"Loaded {len(points)} manual points.", 3000)
 
     def _sync_camera_table(self, points):
+        self.trap_table_sync_in_progress = True
         self.camera_table.setRowCount(0)
         for idx, (x, y) in enumerate(points, start=1):
             row = self.camera_table.rowCount()
             self.camera_table.insertRow(row)
             self.camera_table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.camera_table.setItem(row, 1, QTableWidgetItem(f"{x:.3f}"))
-            self.camera_table.setItem(row, 2, QTableWidgetItem(f"{y:.3f}"))
+            self.camera_table.setItem(row, 1, QTableWidgetItem(str(int(round(x)))))
+            self.camera_table.setItem(row, 2, QTableWidgetItem(str(int(round(y)))))
+        self.trap_table_sync_in_progress = False
 
     def _pattern_generate_points(self):
         req = {
@@ -1202,16 +1337,80 @@ class MainWindow(QMainWindow):
         self._sync_camera_table(self.current_points)
         self._refresh_target_view()
         self._refresh_camera_view()
+        self._maybe_auto_generate_mask()
         self.statusBar().showMessage(f"Pattern generated with {len(self.current_points)} points.", 3000)
 
     def _sync_manual_table(self, points):
+        self.trap_table_sync_in_progress = True
         self.manual_table.setRowCount(0)
         for idx, (x, y) in enumerate(points, start=1):
             row = self.manual_table.rowCount()
             self.manual_table.insertRow(row)
             self.manual_table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.manual_table.setItem(row, 1, QTableWidgetItem(f"{x:.3f}"))
-            self.manual_table.setItem(row, 2, QTableWidgetItem(f"{y:.3f}"))
+            self.manual_table.setItem(row, 1, QTableWidgetItem(str(int(round(x)))))
+            self.manual_table.setItem(row, 2, QTableWidgetItem(str(int(round(y)))))
+        self.trap_table_sync_in_progress = False
+        if 0 <= self.selected_point_index < len(points):
+            self._select_manual_row(self.selected_point_index)
+
+    def _select_manual_row(self, index):
+        if index < 0 or index >= self.manual_table.rowCount():
+            self.manual_table.clearSelection()
+            return
+        self.manual_table.blockSignals(True)
+        self.manual_table.selectRow(index)
+        self.manual_table.blockSignals(False)
+
+    def _update_point_row(self, table, index, x, y):
+        if index < 0 or index >= table.rowCount():
+            return
+        table.blockSignals(True)
+        table.setItem(index, 0, QTableWidgetItem(str(index + 1)))
+        table.setItem(index, 1, QTableWidgetItem(str(int(round(x)))))
+        table.setItem(index, 2, QTableWidgetItem(str(int(round(y)))))
+        table.blockSignals(False)
+
+    def _clamp_point(self, x, y):
+        half_w = max(1.0, float(self.config.get("cam_width", 1920)) / 2.0)
+        half_h = max(1.0, float(self.config.get("cam_height", 1080)) / 2.0)
+        cx = float(int(round(np.clip(x, -half_w, half_w))))
+        cy = float(int(round(np.clip(y, -half_h, half_h))))
+        return cx, cy
+
+    def _on_manual_table_selection_changed(self):
+        if self.trap_table_sync_in_progress:
+            return
+        row = self.manual_table.currentRow()
+        if 0 <= row < len(self.current_points):
+            self.selected_point_index = row
+            self._refresh_target_view()
+            x, y = self.current_points[row]
+            self.grid_hover_label.setText(f"Grid: {int(round(x))}, {int(round(y))}")
+
+    def _on_manual_table_item_changed(self, item):
+        if item is None or self.trap_table_sync_in_progress:
+            return
+        row = item.row()
+        col = item.column()
+        if row < 0 or row >= len(self.current_points):
+            return
+        if col not in (1, 2):
+            return
+        x_old, y_old = self.current_points[row]
+        try:
+            v = float(item.text().strip())
+        except Exception:
+            self._update_point_row(self.manual_table, row, x_old, y_old)
+            return
+        x_new, y_new = (v, y_old) if col == 1 else (x_old, v)
+        x_new, y_new = self._clamp_point(x_new, y_new)
+        self.current_points[row] = (x_new, y_new)
+        self.selected_point_index = row
+        self._update_point_row(self.manual_table, row, x_new, y_new)
+        self._update_point_row(self.camera_table, row, x_new, y_new)
+        self._refresh_target_view()
+        self._refresh_camera_view()
+        self._maybe_auto_generate_mask()
 
     def _load_target_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1236,10 +1435,14 @@ class MainWindow(QMainWindow):
         self.image_info.setText(f"Loaded {Path(path).name}: {len(self.current_points)} points")
         self._refresh_target_view()
         self._refresh_camera_view()
+        self._maybe_auto_generate_mask()
 
     def _clear_target_image(self):
-        self.image_info.setText("No image loaded. Will convert bright pixels into target points.")
+        self.image_info.setText(
+            "No image loaded. Will resize to camera resolution, convert to grayscale, and use it as a GS image target."
+        )
         self.current_points = []
+        self.current_mask = None
         self._sync_manual_table([])
         self._sync_camera_table([])
         self._refresh_target_view()
@@ -1344,6 +1547,8 @@ class MainWindow(QMainWindow):
             return
         self.current_mask = mask
         self._refresh_mask_view()
+        if self._is_auto_send_enabled():
+            self._send_mask_to_output(mask)
         self.statusBar().showMessage(
             f"Mask generated with {info['used']}/{info['requested']} mapped points "
             f"(skip cam={info['skipped_camera']}, skip slm={info['skipped_slm']}).",
@@ -1357,13 +1562,15 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.phase_media_timer.stop()
-        self.phase_media_play_btn.setText("Play Media")
+        if self.phase_media_dialog_play_btn is not None:
+            self.phase_media_dialog_play_btn.setText("Play")
         self.phase_media_frames = []
         self.phase_media_index = 0
         arr = np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
         self.current_mask = arr
         self._refresh_mask_view()
-        self.phase_media_info.setText(f"Media: {Path(path).name} (single image)")
+        if hasattr(self, "phase_media_info") and self.phase_media_info is not None:
+            self.phase_media_info.setText(f"Media: {Path(path).name} (single image)")
         self.statusBar().showMessage(f"Mask loaded: {Path(path).name}", 3000)
 
     def _compose_final_mask(self):
@@ -1493,12 +1700,16 @@ class MainWindow(QMainWindow):
         self.last_fps_timestamp_ms = 0.0
         self.last_fps_frame_count = 0
         self.camera_view.setPixmap(QPixmap())
-        self.camera_view.setText("Camera feed offline")
-        self.camera_pixel_label.setText("Pixel: --, -- | RGB: --, --, --")
+        self.camera_view.setText("Camera Feed (Offline)")
+        self.camera_pixel_label.setText("Camera: --, -- | I: --")
+        self.camera_pixel_status_label.setText("Camera: --, -- | I: --")
+        self.fps_label.setText("FPS: 0")
         if self.camera_preview_fps_label is not None:
             self.camera_preview_fps_label.setText("FPS: 0")
         if self.camera_preview_pixel_label is not None:
             self.camera_preview_pixel_label.setText("Camera: --, -- | I: --")
+        if self._is_camera_target_mode():
+            self._refresh_target_view()
 
     def _on_camera_timer(self):
         frame_bgr = self.camera_manager.read_frame()
@@ -1514,6 +1725,7 @@ class MainWindow(QMainWindow):
         elapsed = now_ms - self.last_fps_timestamp_ms
         if elapsed >= 1000.0:
             fps = self.last_fps_frame_count * 1000.0 / max(1.0, elapsed)
+            self.fps_label.setText(f"FPS: {fps:.1f}")
             if self.camera_preview_fps_label is not None:
                 self.camera_preview_fps_label.setText(f"FPS: {fps:.1f}")
             self.last_fps_timestamp_ms = now_ms
@@ -1541,6 +1753,8 @@ class MainWindow(QMainWindow):
         )
         self.camera_view.setPixmap(scaled)
         self.camera_draw_rect = self._pixmap_draw_rect(self.camera_view, scaled)
+        if self._is_camera_target_mode():
+            self._render_camera_target_panel(frame_bgr)
         if self.camera_preview_window is not None and self.camera_preview_window.isVisible() and self.camera_preview_label is not None:
             preview_scaled = pixmap.scaled(
                 self.camera_preview_label.width(),
@@ -1549,6 +1763,34 @@ class MainWindow(QMainWindow):
                 Qt.TransformationMode.SmoothTransformation,
             )
             self.camera_preview_label.setPixmap(preview_scaled)
+
+    def _render_camera_target_panel(self, frame_bgr):
+        display = np.array(frame_bgr, copy=True)
+        h, w = display.shape[:2]
+        cv2.line(display, (w // 2, 0), (w // 2, h - 1), (120, 90, 170), 1, cv2.LINE_AA)
+        cv2.line(display, (0, h // 2), (w - 1, h // 2), (120, 90, 170), 1, cv2.LINE_AA)
+        cam_w = max(1.0, float(self.config.get("cam_width", w)))
+        cam_h = max(1.0, float(self.config.get("cam_height", h)))
+        for i, (x, y) in enumerate(self.current_points):
+            px = int(round((x / cam_w + 0.5) * (w - 1)))
+            py = int(round((0.5 - y / cam_h) * (h - 1)))
+            if 0 <= px < w and 0 <= py < h:
+                selected = i == self.selected_point_index
+                if selected:
+                    cv2.circle(display, (px, py), 6, (20, 190, 20), -1, lineType=cv2.LINE_AA)
+                    cv2.circle(display, (px, py), 6, (40, 255, 40), 2, lineType=cv2.LINE_AA)
+                else:
+                    cv2.circle(display, (px, py), 5, (130, 170, 235), -1, lineType=cv2.LINE_AA)
+                    cv2.circle(display, (px, py), 5, (110, 150, 255), 1, lineType=cv2.LINE_AA)
+        rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+        qimg = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format.Format_RGB888).copy()
+        pix = QPixmap.fromImage(qimg).scaled(
+            self.target_view.width(),
+            self.target_view.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.target_view.setPixmap(pix)
 
     def _draw_overlay_on_frame(self, frame_bgr):
         h, w = frame_bgr.shape[:2]
@@ -1570,8 +1812,13 @@ class MainWindow(QMainWindow):
         return QRect(x, y, pw, ph)
 
     def _update_camera_pixel_readout(self, pos: QPoint, source_widget=None):
+        camera_pixel_label = getattr(self, "camera_pixel_label", None)
+        camera_pixel_status_label = getattr(self, "camera_pixel_status_label", None)
         if self.camera_frame_rgb is None or self.camera_source_size is None:
-            self.camera_pixel_label.setText("Pixel: --, -- | RGB: --, --, --")
+            if camera_pixel_label is not None:
+                camera_pixel_label.setText("Camera: --, -- | I: --")
+            if camera_pixel_status_label is not None:
+                camera_pixel_status_label.setText("Camera: --, -- | I: --")
             if self.camera_preview_pixel_label is not None:
                 self.camera_preview_pixel_label.setText("Camera: --, -- | I: --")
             return
@@ -1580,7 +1827,10 @@ class MainWindow(QMainWindow):
         if widget == self.camera_preview_label and self.camera_preview_label is not None and self.camera_preview_label.pixmap() is not None:
             rect = self._pixmap_draw_rect(self.camera_preview_label, self.camera_preview_label.pixmap())
         if not rect.contains(pos):
-            self.camera_pixel_label.setText("Pixel: --, -- | RGB: --, --, --")
+            if camera_pixel_label is not None:
+                camera_pixel_label.setText("Camera: --, -- | I: --")
+            if camera_pixel_status_label is not None:
+                camera_pixel_status_label.setText("Camera: --, -- | I: --")
             if self.camera_preview_pixel_label is not None:
                 self.camera_preview_pixel_label.setText("Camera: --, -- | I: --")
             return
@@ -1590,8 +1840,11 @@ class MainWindow(QMainWindow):
         ix = int(np.clip(round(rx * (sw - 1)), 0, sw - 1))
         iy = int(np.clip(round(ry * (sh - 1)), 0, sh - 1))
         r, g, b = self.camera_frame_rgb[iy, ix].tolist()
-        self.camera_pixel_label.setText(f"Pixel: {ix}, {iy} | RGB: {r}, {g}, {b}")
         intensity = int(round((int(r) + int(g) + int(b)) / 3.0))
+        if camera_pixel_label is not None:
+            camera_pixel_label.setText(f"Camera: {ix}, {iy} | I: {intensity}")
+        if camera_pixel_status_label is not None:
+            camera_pixel_status_label.setText(f"Camera: {ix}, {iy} | I: {intensity}")
         if self.camera_preview_pixel_label is not None:
             self.camera_preview_pixel_label.setText(f"Camera: {ix}, {iy} | I: {intensity}")
 
@@ -1661,14 +1914,18 @@ class MainWindow(QMainWindow):
         ph = pix.height()
         return QRect((lw - pw) // 2, (lh - ph) // 2, pw, ph)
 
+    def _target_plot_margin(self):
+        return 14
+
     def _target_point_to_label(self, x, y):
         rect = self._target_draw_rect()
         if rect.width() <= 0 or rect.height() <= 0:
             return None
+        margin = self._target_plot_margin()
         cam_w = max(1.0, float(self.config.get("cam_width", 1920)) / 2.0)
         cam_h = max(1.0, float(self.config.get("cam_height", 1080)) / 2.0)
-        px = int(round(rect.x() + rect.width() / 2.0 + (x / cam_w) * (rect.width() / 2.0 - 10)))
-        py = int(round(rect.y() + rect.height() / 2.0 - (y / cam_h) * (rect.height() / 2.0 - 10)))
+        px = int(round(rect.x() + rect.width() / 2.0 + (x / cam_w) * (rect.width() / 2.0 - margin)))
+        py = int(round(rect.y() + rect.height() / 2.0 - (y / cam_h) * (rect.height() / 2.0 - margin)))
         return QPoint(px, py)
 
     def _label_to_target_point(self, pos):
@@ -1677,10 +1934,11 @@ class MainWindow(QMainWindow):
             return None
         if not rect.contains(pos):
             return None
+        margin = self._target_plot_margin()
         cam_w = max(1.0, float(self.config.get("cam_width", 1920)) / 2.0)
         cam_h = max(1.0, float(self.config.get("cam_height", 1080)) / 2.0)
-        nx = (pos.x() - (rect.x() + rect.width() / 2.0)) / max(1.0, (rect.width() / 2.0 - 10))
-        ny = ((rect.y() + rect.height() / 2.0) - pos.y()) / max(1.0, (rect.height() / 2.0 - 10))
+        nx = (pos.x() - (rect.x() + rect.width() / 2.0)) / max(1.0, (rect.width() / 2.0 - margin))
+        ny = ((rect.y() + rect.height() / 2.0) - pos.y()) / max(1.0, (rect.height() / 2.0 - margin))
         return float(nx * cam_w), float(ny * cam_h)
 
     def _nearest_point_index(self, pos, radius_px=10):
@@ -1699,47 +1957,71 @@ class MainWindow(QMainWindow):
         return best_idx
 
     def _on_target_mouse_press(self, pos, button):
+        if self._is_camera_target_mode():
+            return
         if button == Qt.MouseButton.LeftButton:
             idx = self._nearest_point_index(pos)
             if idx >= 0:
                 self.selected_point_index = idx
+                self._select_manual_row(idx)
                 self.dragging_point = True
+                self.grid_drag_moved = False
+                self._refresh_target_view()
                 return
             coords = self._label_to_target_point(pos)
             if coords is None:
                 return
-            self.current_points.append(coords)
+            self.current_points.append(self._clamp_point(coords[0], coords[1]))
             self.selected_point_index = len(self.current_points) - 1
             self._sync_manual_table(self.current_points)
             self._sync_camera_table(self.current_points)
+            self._select_manual_row(self.selected_point_index)
             self._refresh_target_view()
             self._refresh_camera_view()
+            self._maybe_auto_generate_mask()
         elif button == Qt.MouseButton.RightButton:
             idx = self._nearest_point_index(pos)
             if idx >= 0:
                 self.current_points.pop(idx)
-                self.selected_point_index = -1
+                if self.selected_point_index == idx:
+                    self.selected_point_index = -1
+                elif self.selected_point_index > idx:
+                    self.selected_point_index -= 1
                 self._sync_manual_table(self.current_points)
                 self._sync_camera_table(self.current_points)
                 self._refresh_target_view()
                 self._refresh_camera_view()
+                self._maybe_auto_generate_mask()
 
     def _on_target_mouse_release(self, _pos, button):
+        if self._is_camera_target_mode():
+            self.dragging_point = False
+            self.grid_drag_moved = False
+            return
         if button == Qt.MouseButton.LeftButton:
             self.dragging_point = False
+            if self.grid_drag_moved:
+                self._maybe_auto_generate_mask()
+            self.grid_drag_moved = False
 
     def _update_grid_hover_and_drag(self, pos):
+        if self._is_camera_target_mode():
+            self.grid_hover_label.setText("Grid: --, --")
+            return
         coords = self._label_to_target_point(pos)
         if coords is None:
             self.grid_hover_label.setText("Grid: --, --")
             return
-        self.grid_hover_label.setText(f"Grid: {coords[0]:.1f}, {coords[1]:.1f}")
+        self.grid_hover_label.setText(f"Grid: {int(round(coords[0]))}, {int(round(coords[1]))}")
         if self.dragging_point and 0 <= self.selected_point_index < len(self.current_points):
-            self.current_points[self.selected_point_index] = coords
-            self._sync_manual_table(self.current_points)
-            self._sync_camera_table(self.current_points)
+            x, y = self._clamp_point(coords[0], coords[1])
+            self.current_points[self.selected_point_index] = (x, y)
+            self._update_point_row(self.manual_table, self.selected_point_index, x, y)
+            self._update_point_row(self.camera_table, self.selected_point_index, x, y)
+            self._select_manual_row(self.selected_point_index)
             self._refresh_target_view()
             self._refresh_camera_view()
+            self.grid_drag_moved = True
 
     def _refresh_all_views(self):
         self._refresh_target_view()
@@ -1747,29 +2029,90 @@ class MainWindow(QMainWindow):
         self._refresh_camera_view()
 
     def _refresh_target_view(self):
-        w, h = 600, 360
+        if self._is_camera_target_mode():
+            frame = self.camera_manager.last_frame_bgr
+            if frame is None:
+                self.target_view.setPixmap(QPixmap())
+                self.target_view.setText("Camera Target (No Live Frame)")
+                return
+            self._render_camera_target_panel(frame)
+            return
+
+        w = max(300, self.target_view.width() - 2)
+        h = max(200, self.target_view.height() - 2)
         canvas = np.zeros((h, w, 3), dtype=np.uint8)
+        canvas[:] = (16, 18, 24)
         cx, cy = w // 2, h // 2
-        canvas[:, cx : cx + 1] = (40, 40, 40)
-        canvas[cy : cy + 1, :] = (40, 40, 40)
+        margin = self._target_plot_margin()
+
+        # Fine grid lines (C++-like target grid background)
+        for i in range(1, 8):
+            gx = int(round(margin + i * (w - 2 * margin) / 8.0))
+            gy = int(round(margin + i * (h - 2 * margin) / 8.0))
+            canvas[:, gx : gx + 1] = (28, 32, 40)
+            canvas[gy : gy + 1, :] = (28, 32, 40)
+
+        # Main axes
+        canvas[:, cx : cx + 1] = (88, 68, 120)
+        canvas[cy : cy + 1, :] = (88, 68, 120)
+
+        cam_w = max(1.0, float(self.config.get("cam_width", 1920)) / 2.0)
+        cam_h = max(1.0, float(self.config.get("cam_height", 1080)) / 2.0)
+
+        # Coordinate labels to mirror C++ TargetGridWidget
+        text_color = (180, 200, 230)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(canvas, f"({-int(cam_w)}, {int(cam_h)})", (10, 22), font, 0.5, text_color, 1, cv2.LINE_AA)
+        tr = f"({int(cam_w)}, {int(cam_h)})"
+        tr_size = cv2.getTextSize(tr, font, 0.5, 1)[0]
+        cv2.putText(canvas, tr, (w - tr_size[0] - 10, 22), font, 0.5, text_color, 1, cv2.LINE_AA)
+        bl = f"({-int(cam_w)}, {-int(cam_h)})"
+        cv2.putText(canvas, bl, (10, h - 12), font, 0.5, text_color, 1, cv2.LINE_AA)
+        br = f"({int(cam_w)}, {-int(cam_h)})"
+        br_size = cv2.getTextSize(br, font, 0.5, 1)[0]
+        cv2.putText(canvas, br, (w - br_size[0] - 10, h - 12), font, 0.5, text_color, 1, cv2.LINE_AA)
+        cv2.putText(canvas, "(0,0)", (cx - 18, cy + 6), font, 0.5, text_color, 1, cv2.LINE_AA)
+        cv2.putText(canvas, "X", (w - 26, cy + 6), font, 0.65, (110, 170, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "Y", (cx + 10, 24), font, 0.65, (110, 170, 255), 1, cv2.LINE_AA)
+
         cam_w = max(1.0, float(self.config.get("cam_width", 1920)) / 2.0)
         cam_h = max(1.0, float(self.config.get("cam_height", 1080)) / 2.0)
         for i, (x, y) in enumerate(self.current_points):
-            px = int(round(cx + (x / cam_w) * (w / 2.0 - 10)))
-            py = int(round(cy - (y / cam_h) * (h / 2.0 - 10)))
+            px = int(round(cx + (x / cam_w) * (w / 2.0 - margin)))
+            py = int(round(cy - (y / cam_h) * (h / 2.0 - margin)))
             if 0 <= px < w and 0 <= py < h:
-                color = (0, 220, 255)
-                if i == self.selected_point_index:
-                    color = (255, 220, 0)
-                canvas[max(0, py - 3) : min(h, py + 4), max(0, px - 3) : min(w, px + 4)] = color
+                selected = i == self.selected_point_index
+                if selected:
+                    cv2.circle(canvas, (px, py), 6, (20, 190, 20), -1, lineType=cv2.LINE_AA)
+                    cv2.circle(canvas, (px, py), 6, (40, 255, 40), 2, lineType=cv2.LINE_AA)
+                else:
+                    cv2.circle(canvas, (px, py), 5, (130, 170, 235), -1, lineType=cv2.LINE_AA)
+                    cv2.circle(canvas, (px, py), 5, (110, 150, 255), 1, lineType=cv2.LINE_AA)
+                label_color = (40, 255, 40) if selected else (90, 130, 200)
+                cv2.putText(
+                    canvas,
+                    str(i + 1),
+                    (px - 4, py - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.42,
+                    label_color,
+                    1,
+                    cv2.LINE_AA,
+                )
         qimg = QImage(canvas.data, w, h, canvas.strides[0], QImage.Format.Format_RGB888)
-        self.target_view.setPixmap(QPixmap.fromImage(qimg.copy()))
+        pix = QPixmap.fromImage(qimg.copy()).scaled(
+            self.target_view.width(),
+            self.target_view.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.target_view.setPixmap(pix)
 
     def _refresh_mask_view(self):
         final = self._compose_final_mask()
         if final is None:
             self.phase_mask_view.setPixmap(QPixmap())
-            self.phase_mask_view.setText("No mask")
+            self.phase_mask_view.setText("SLM Offline")
             return
         h, w = final.shape
         qimg = QImage(final.data, w, h, final.strides[0], QImage.Format.Format_Grayscale8)
@@ -1807,6 +2150,7 @@ class MainWindow(QMainWindow):
                 "QMainWindow{background:#1f2228;color:#e5e7eb;}"
                 "QWidget{color:#e5e7eb;}"
                 "QGroupBox{border:1px solid #4b5563; margin-top:8px; padding-top:8px;}"
+                "QGroupBox::title{subcontrol-origin:margin; left:10px; padding:0 4px;}"
                 "QPushButton{background:#374151; border:1px solid #6b7280; padding:4px 8px;}"
                 "QLineEdit,QTextEdit,QSpinBox,QDoubleSpinBox,QComboBox,QTableWidget{background:#111827; border:1px solid #4b5563;}"
                 "QTabWidget::pane{border:1px solid #4b5563;}"
@@ -1855,14 +2199,26 @@ class MainWindow(QMainWindow):
         self.camera_preview_monitor_combo.clear()
         if not screens:
             self.camera_preview_monitor_combo.addItem("No monitor", -1)
+            self.camera_preview_monitor_combo.setToolTip("No connected monitors are available for camera preview.")
             self.camera_preview_monitor_combo.blockSignals(False)
+            if hasattr(self, "camera_preview_toggle_btn"):
+                self.camera_preview_toggle_btn.setEnabled(False)
+                self.camera_preview_toggle_btn.setToolTip("Choose a connected monitor for camera preview.")
             return
         for idx, screen in enumerate(screens, start=1):
             name = screen.name() if screen.name() else f"Display {idx}"
-            self.camera_preview_monitor_combo.addItem(f"{idx}: {name}", idx)
+            size = screen.geometry().size()
+            self.camera_preview_monitor_combo.addItem(
+                f"Monitor {idx}: {name} ({size.width()}x{size.height()})",
+                idx,
+            )
         selected = max(1, min(self.camera_preview_monitor_number, len(screens)))
         self.camera_preview_monitor_combo.setCurrentIndex(selected - 1)
+        self.camera_preview_monitor_combo.setToolTip(self.camera_preview_monitor_combo.currentText())
         self.camera_preview_monitor_combo.blockSignals(False)
+        if hasattr(self, "camera_preview_toggle_btn"):
+            self.camera_preview_toggle_btn.setEnabled(True)
+            self.camera_preview_toggle_btn.setToolTip("Mirror the current camera preview on the selected monitor.")
 
     def _on_camera_preview_monitor_changed(self, _index):
         value = self.camera_preview_monitor_combo.currentData()
@@ -1887,6 +2243,9 @@ class MainWindow(QMainWindow):
         self.camera_preview_label.setMinimumSize(640, 360)
         self.camera_preview_label.setStyleSheet("border:1px solid #666; background:#0d0d0d;")
         self.camera_preview_label.setMouseTracking(True)
+        self.camera_preview_label.setToolTip(
+            "Left-drag to zoom. Right-click to undo one zoom step. Double-click to reset zoom."
+        )
         self.camera_preview_label.installEventFilter(self)
         layout.addWidget(self.camera_preview_label, 1)
         controls = QHBoxLayout()
@@ -1922,7 +2281,7 @@ class MainWindow(QMainWindow):
         self.camera_preview_window.setGeometry(screens[idx].geometry())
         self.camera_preview_window.show()
         self.camera_preview_window.raise_()
-        self.camera_preview_toggle_btn.setText("Hide Monitor")
+        self.camera_preview_toggle_btn.setText("Hide From Monitor")
 
     def _selected_screen(self):
         screens = QGuiApplication.screens()
